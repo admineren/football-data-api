@@ -4,14 +4,13 @@ import csv
 import os
 import sys
 
-# 🔥 ENV'den al
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 if not DATABASE_URL:
     raise ValueError("DATABASE_URL bulunamadı!")
 
-len(sys.argv) < 2:
-    print("Kullanım: python insert.py dosya.csv")
+if len(sys.argv) < 2:
+    print("Kullanım: python insert.py file.csv")
     exit()
 
 CSV_FILE = sys.argv[1]
