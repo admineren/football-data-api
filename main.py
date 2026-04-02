@@ -1,23 +1,13 @@
 from fastapi import FastAPI
-import psycopg2
+from db import get_conn
 
 app = FastAPI()
-
-# 🔥 BURAYA SENİN CONNECTION STRING
-DB_URL = "postgresql://postgres.ttmrttxmnfljcmtheqhv:Erenyalcin18..@aws-1-eu-north-1.pooler.supabase.com:6543/postgres"
-
-
-def get_conn():
-    return psycopg2.connect(
-        DB_URL,
-        sslmode="require",
-        connect_timeout=10
-    )
 
 
 @app.get("/")
 def home():
     return {"status": "running"}
+
 
 @app.get("/test-db")
 def test_db():
