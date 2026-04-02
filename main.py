@@ -4,7 +4,7 @@ import psycopg2
 app = FastAPI()
 
 # 🔥 BURAYA SENİN CONNECTION STRING
-DB_URL = postgresql://postgres:Erenyalcin18..@db.ttmrttxmnfljcmtheqhv.supabase.co:5432/postgres
+DB_URL = "postgresql://postgres:Erenyalcin18..@db.ttmrttxmnfljcmtheqhv.supabase.co:5432/postgres"
 
 
 def get_conn():
