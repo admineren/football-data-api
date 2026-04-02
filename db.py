@@ -1,8 +1,11 @@
 import psycopg2
 import os
 
+DB_URL = os.getenv("DATABASE_URL")
+
 def get_conn():
     return psycopg2.connect(
-        os.getenv("DATABASE_URL"),
-        sslmode="require"
+        DB_URL,
+        sslmode="require",
+        connect_timeout=10
     )
