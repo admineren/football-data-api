@@ -4,7 +4,7 @@ import os
 
 app = FastAPI()
 
-DB_URL = os.getenv("DATABASE_URL")
+DB_URL = os.environ.get("DATABASE_URL")
 
 def get_conn():
     return psycopg2.connect(
@@ -28,3 +28,8 @@ def test_db():
         return {"status": "ok"}
     except Exception as e:
         return {"error": str(e)}
+
+
+@app.get("/debug-full")
+def debug_full():
+    return dict(os.environ)
