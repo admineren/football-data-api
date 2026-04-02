@@ -3,6 +3,7 @@ import asyncpg
 import csv
 import os
 import sys
+from datetime import datetime
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
@@ -16,7 +17,7 @@ if len(sys.argv) < 2:
 CSV_FILE = sys.argv[1]
 
 
-# 🔒 güvenli dönüşümler
+# 🔒 dönüşümler
 def safe_int(val):
     try:
         return int(val) if val not in ("", None) else None
@@ -33,6 +34,13 @@ def safe_float(val):
 
 def safe_bool(val):
     return str(val).lower() == "true"
+
+
+def safe_date(val):
+    try:
+        return datetime.strptime(val, "%Y-%m-%d").date() if val else None
+    except:
+        return None
 
 
 async def insert_data():
@@ -88,8 +96,8 @@ async def insert_data():
 
                 row.get("home_team"),
                 row.get("away_team"),
-                row.get("date"),
-                row.get("time"),
+                safe_date(row.get("date")),
+                row.get("time") if row.get("time") else None,
 
                 # SCORE
                 safe_int(row.get("ht_home")),
