@@ -4,17 +4,14 @@ import psycopg2
 app = FastAPI()
 
 # 🔥 BURAYA SENİN CONNECTION STRING
-DB_URL = "postgresql://postgres:Erenyalcin18..@db.ttmrttxmnfljcmtheqhv.supabase.co:5432/postgres"
+DB_URL = "postgresql://postgres.ttmrttxmnfljcmtheqhv:Erenyalcinn18..@aws-1-eu-north-1.pooler.supabase.com:6543/postgres"
 
 
 def get_conn():
     return psycopg2.connect(
-        host="db.ttmrttxmnfljcmtheqhv.supabase.co",
-        database="postgres",
-        user="postgres",
-        password="SIFRE",
-        port=5432,
-        sslmode="require"
+        DB_URL,
+        sslmode="require",
+        connect_timeout=10
     )
 
 
@@ -26,8 +23,9 @@ def home():
 def test_db():
     try:
         conn = get_conn()
-        conn.close()
-        return {"db": "connected"}
+        cur = conn.cursor()
+        cur.execute("SELECT 1")
+        return {"status": "ok"}
     except Exception as e:
         return {"error": str(e)}
 
