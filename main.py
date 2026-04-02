@@ -9,7 +9,11 @@ DB_URL = "postgresql://postgres:Erenyalcin18..@db.ttmrttxmnfljcmtheqhv.supabase.
 
 def get_conn():
     return psycopg2.connect(
-        DB_URL,
+        host="db.ttmrttxmnfljcmtheqhv.supabase.co",
+        database="postgres",
+        user="postgres",
+        password="SIFRE",
+        port=5432,
         sslmode="require"
     )
 
