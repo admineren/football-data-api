@@ -9,10 +9,10 @@ app = FastAPI()
 def home():
     return {"status": "running"}
 
-
 @app.get("/debug")
 def debug():
-    return {"url": os.getenv("DATABASE_URL")}
+    import os
+    return {"url": os.environ.get("DATABASE_URL")}
 
 
 @app.get("/matches")
