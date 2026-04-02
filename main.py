@@ -9,15 +9,9 @@ def home():
     return {"status": "running"}
 
 
-@app.get("/test-db")
-def test_db():
-    try:
-        conn = get_conn()
-        cur = conn.cursor()
-        cur.execute("SELECT 1")
-        return {"status": "ok"}
-    except Exception as e:
-        return {"error": str(e)}
+@app.get("/debug")
+def debug():
+    return {"url": os.getenv("DATABASE_URL")}
 
 
 @app.get("/matches")
