@@ -1,45 +1,36 @@
 from fastapi import FastAPI
-from db import get_conn
+import psycopg2
 import os
 
 app = FastAPI()
+
+
+def get_conn():
+    return psycopg2.connect(
+        os.environ.get("DATABASE_URL"),
+        sslmode="require",
+        connect_timeout=10
+    )
 
 
 @app.get("/")
 def home():
     return {"status": "running"}
 
+
 @app.get("/debug")
 def debug():
-    import os
     return {"url": os.environ.get("DATABASE_URL")}
 
 
-@app.get("/matches")
-def get_matches():
-
-    conn = get_conn()
-    cur = conn.cursor()
-
-    cur.execute("""
-        SELECT match_id, home_team, away_team, ft_home, ft_away
-        FROM matches
-        ORDER BY match_id DESC
-        LIMIT 50;
-    """)
-
-    rows = cur.fetchall()
-
-    cur.close()
-    conn.close()
-
-    data = []
-    for r in rows:
-        data.append({
-            "match_id": r[0],
-            "home": r[1],
-            "away": r[2],
-            "score": f"{r[3]}-{r[4]}"
-        })
-
-    return data
+@app.get("/test-db")
+def test_db():
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT 1")
+        cur.close()
+        conn.close()
+        return {"status": "ok"}
+    except Exception as e:
+        return {"error": str(e)}
