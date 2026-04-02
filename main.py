@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from db import get_conn
+import os
 
 app = FastAPI()
 
