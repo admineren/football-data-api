@@ -4,6 +4,8 @@ import os
 
 app = FastAPI()
 
+
+# 🔥 DB bağlantı
 def get_conn():
     db_url = os.getenv("DATABASE_URL")
 
@@ -16,22 +18,54 @@ def get_conn():
         connect_timeout=10
     )
 
+
+# 🎯 league format
+def format_league(country, league):
+    return f"{country.title()}: {league.replace('-', ' ').title()}"
+
+
+# 🏠 root
 @app.get("/")
 def home():
     return {"status": "running"}
 
-@app.get("/test-db")
-def test_db():
+
+# 🧪 DB sağlık kontrolü
+@app.get("/health")
+def health():
     try:
         conn = get_conn()
         cur = conn.cursor()
         cur.execute("SELECT 1")
         cur.close()
         conn.close()
-        return {"status": "ok"}
+        return {"database": "connected"}
+    except Exception as e:
+        return {"database": "error", "detail": str(e)}
+
+
+# 📊 toplam maç sayısı
+@app.get("/stats")
+def stats():
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+
+        cur.execute("SELECT COUNT(*) FROM matches;")
+        total = cur.fetchone()[0]
+
+        cur.close()
+        conn.close()
+
+        return {
+            "total_matches": total
+        }
+
     except Exception as e:
         return {"error": str(e)}
 
+
+# ⚽ maç listesi (sade)
 @app.get("/matches")
 def get_matches():
     try:
@@ -39,10 +73,19 @@ def get_matches():
         cur = conn.cursor()
 
         cur.execute("""
-            SELECT match_id, home_team, away_team, ft_home, ft_away
+            SELECT 
+                country,
+                league,
+                home_team,
+                away_team,
+                ht_home,
+                ht_away,
+                ft_home,
+                ft_away,
+                has_odds
             FROM matches
             ORDER BY match_id DESC
-            LIMIT 20;
+            LIMIT 50;
         """)
 
         rows = cur.fetchall()
@@ -50,15 +93,18 @@ def get_matches():
         cur.close()
         conn.close()
 
-        return [
-            {
-                "match_id": r[0],
-                "home": r[1],
-                "away": r[2],
-                "score": f"{r[3]}-{r[4]}"
-            }
-            for r in rows
-        ]
+        data = []
+
+        for r in rows:
+            data.append({
+                "league": format_league(r[0], r[1]),
+                "match": f"{r[2]} vs {r[3]}",
+                "ht_score": f"{r[4]}-{r[5]}" if r[4] is not None else None,
+                "ft_score": f"{r[6]}-{r[7]}" if r[6] is not None else None,
+                "has_odds": r[8]
+            })
+
+        return data
 
     except Exception as e:
         return {"error": str(e)}
