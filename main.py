@@ -8,12 +8,24 @@ DB_URL = "postgresql://postgres:Erenyalcin18..@db.ttmrttxmnfljcmtheqhv.supabase.
 
 
 def get_conn():
-    return psycopg2.connect(DB_URL)
+    return psycopg2.connect(
+        DB_URL,
+        sslmode="require"
+    )
 
 
 @app.get("/")
 def home():
     return {"status": "running"}
+
+@app.get("/test-db")
+def test_db():
+    try:
+        conn = get_conn()
+        conn.close()
+        return {"db": "connected"}
+    except Exception as e:
+        return {"error": str(e)}
 
 
 @app.get("/matches")
