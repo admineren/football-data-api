@@ -4,24 +4,26 @@ import os
 
 app = FastAPI()
 
+# 🔥 ENV'den al
+DB_URL = os.getenv("DATABASE_URL")
 
 def get_conn():
     return psycopg2.connect(
-        os.environ.get("DATABASE_URL"),
-        sslmode="require",
-        connect_timeout=10
+        DB_URL,
+        sslmode="require"
     )
-
 
 @app.get("/")
 def home():
     return {"status": "running"}
 
-
+# DEBUG endpoint (çok önemli)
 @app.get("/debug")
 def debug():
-    return {"url": os.environ.get("DATABASE_URL")}
-
+    return {
+        "db_url_exists": DB_URL is not None,
+        "db_url_preview": DB_URL[:30] if DB_URL else None
+    }
 
 @app.get("/test-db")
 def test_db():
