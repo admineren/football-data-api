@@ -16,17 +16,23 @@ if len(sys.argv) < 2:
 CSV_FILE = sys.argv[1]
 
 
-# 🧠 güvenli dönüşümler
+# 🔒 güvenli dönüşümler
 def safe_int(val):
-    return int(val) if val not in ("", None) else None
+    try:
+        return int(val) if val not in ("", None) else None
+    except:
+        return None
 
 
 def safe_float(val):
-    return float(val) if val not in ("", None) else None
+    try:
+        return float(val) if val not in ("", None) else None
+    except:
+        return None
 
 
 def safe_bool(val):
-    return val == "True"
+    return str(val).lower() == "true"
 
 
 async def insert_data():
@@ -74,53 +80,61 @@ async def insert_data():
                     ON CONFLICT (match_id) DO NOTHING
                 """,
 
-                row["match_id"],
-                row["country"],
-                row["league"],
-                row["season"],
-                row["home_team"],
-                row["away_team"],
-                row["date"],
-                row["time"],
+                # BASIC
+                row.get("match_id"),
+                row.get("country"),
+                row.get("league"),
+                safe_int(row.get("season")),
 
-                safe_int(row["ht_home"]),
-                safe_int(row["ht_away"]),
-                safe_int(row["ft_home"]),
-                safe_int(row["ft_away"]),
+                row.get("home_team"),
+                row.get("away_team"),
+                row.get("date"),
+                row.get("time"),
 
-                safe_int(row["ht_total_goals"]),
-                safe_int(row["ft_total_goals"]),
-                safe_int(row["goal_diff"]),
-                row["result"],
-                row["ht_ft"],
-                safe_bool(row["has_odds"]),
+                # SCORE
+                safe_int(row.get("ht_home")),
+                safe_int(row.get("ht_away")),
+                safe_int(row.get("ft_home")),
+                safe_int(row.get("ft_away")),
 
-                row["bookmaker_1x2"],
-                safe_float(row["home_odds"]),
-                safe_float(row["draw_odds"]),
-                safe_float(row["away_odds"]),
+                # DERIVED
+                safe_int(row.get("ht_total_goals")),
+                safe_int(row.get("ft_total_goals")),
+                safe_int(row.get("goal_diff")),
+                row.get("result"),
+                row.get("ht_ft"),
+                safe_bool(row.get("has_odds")),
 
-                row["bookmaker_ou1.5"],
-                safe_float(row["ou1.5_over"]),
-                safe_float(row["ou1.5_under"]),
-                row["bookmaker_ou2.5"],
-                safe_float(row["ou2.5_over"]),
-                safe_float(row["ou2.5_under"]),
-                row["bookmaker_ou3.5"],
-                safe_float(row["ou3.5_over"]),
-                safe_float(row["ou3.5_under"]),
-                row["bookmaker_ou4.5"],
-                safe_float(row["ou4.5_over"]),
-                safe_float(row["ou4.5_under"]),
+                # 1X2
+                row.get("bookmaker_1x2"),
+                safe_float(row.get("home_odds")),
+                safe_float(row.get("draw_odds")),
+                safe_float(row.get("away_odds")),
 
-                row["bookmaker_btts"],
-                safe_float(row["btts_yes"]),
-                safe_float(row["btts_no"]),
+                # OU
+                row.get("bookmaker_ou1.5"),
+                safe_float(row.get("ou1.5_over")),
+                safe_float(row.get("ou1.5_under")),
+                row.get("bookmaker_ou2.5"),
+                safe_float(row.get("ou2.5_over")),
+                safe_float(row.get("ou2.5_under")),
+                row.get("bookmaker_ou3.5"),
+                safe_float(row.get("ou3.5_over")),
+                safe_float(row.get("ou3.5_under")),
+                row.get("bookmaker_ou4.5"),
+                safe_float(row.get("ou4.5_over")),
+                safe_float(row.get("ou4.5_under")),
 
-                row["bookmaker_ah"],
-                row["ah_line"],
-                safe_float(row["ah_home"]),
-                safe_float(row["ah_away"]),
+                # BTTS
+                row.get("bookmaker_btts"),
+                safe_float(row.get("btts_yes")),
+                safe_float(row.get("btts_no")),
+
+                # AH
+                row.get("bookmaker_ah"),
+                row.get("ah_line"),
+                safe_float(row.get("ah_home")),
+                safe_float(row.get("ah_away")),
                 )
 
                 inserted += 1
@@ -128,6 +142,7 @@ async def insert_data():
             except Exception as e:
                 skipped += 1
                 print("HATALI SATIR:", e)
+                print("ROW:", row)
 
     await conn.close()
 
@@ -135,5 +150,4 @@ async def insert_data():
     print(f"Skipped: {skipped}")
 
 
-# 🚀 çalıştır
 asyncio.run(insert_data())
