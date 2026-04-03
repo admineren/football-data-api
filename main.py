@@ -108,3 +108,34 @@ def get_matches():
 
     except Exception as e:
         return {"error": str(e)}
+
+@app.get("/leagues/summary")
+async def leagues_summary(country: str):
+    conn = await asyncpg.connect(DATABASE_URL)
+
+    rows = await conn.fetch("""
+        SELECT 
+            league,
+            COUNT(*) as total_matches,
+            COUNT(*) FILTER (WHERE has_odds = true) as with_odds,
+            COUNT(*) FILTER (WHERE has_odds = false) as no_odds
+        FROM matches
+        WHERE country = $1
+        GROUP BY league
+        ORDER BY total_matches DESC;
+    """, country.lower())
+
+    await conn.close()
+
+    return {
+        "country": country.title(),
+        "leagues": [
+            {
+                "league": row["league"].replace("-", " ").title(),
+                "total_matches": row["total_matches"],
+                "with_odds": row["with_odds"],
+                "no_odds": row["no_odds"]
+            }
+            for row in rows
+        ]
+    }
