@@ -29,10 +29,16 @@ async def startup():
 async def shutdown():
     await pool.close()
 
+# Ülke Format
+def format_country(country):
+    return country.replace("-", " ").title()
+
 
 # 🎯 league format
 def format_league(country, league):
-    return f"{country.title()}: {league.replace('-', ' ').title()}"
+    country = country.replace("-", " ").title()
+    league = league.replace("-", " ").title()
+    return f"{country}: {league}"
 
 
 # 🏠 root
@@ -63,7 +69,7 @@ async def stats():
         return {"error": str(e)}
 
 
-# ⚽ MATCHES (🔥 pagination + country filter)
+# MATCHES DB - PAGINATION 
 @app.get("/matches")
 async def get_matches(
     country: str = None,
@@ -105,8 +111,7 @@ async def get_matches(
     except Exception as e:
         return {"error": str(e)}
 
-
-# 📊 lig özet
+# LEAGUE SUMMARY - COUNTRY AND LEAGUES
 @app.get("/leagues/summary")
 async def leagues_summary(country: str):
     try:
@@ -125,7 +130,7 @@ async def leagues_summary(country: str):
             """, country.lower())
 
         return {
-            "country": country.title(),
+            "country": format_country(country),
             "leagues": [
                 {
                     "league": row["league"].replace("-", " ").title(),
@@ -139,3 +144,4 @@ async def leagues_summary(country: str):
 
     except Exception as e:
         return {"error": str(e)}
+        
