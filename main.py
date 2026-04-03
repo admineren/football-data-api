@@ -42,6 +42,37 @@ def format_league(country, league):
 def format_percent(value):
     return f"{round(value * 100, 1)}%"
 
+# 🔥 LEAGUE ALIASES
+LEAGUE_ALIASES = {
+    "georgia": {
+        "erovnuli-liga": [
+            "umaglesi-liga",
+            "crystalbet-erovnuli-liga"
+        ],
+        "erovnuli-liga-2": [
+            "pirveli-liga",
+            "crystalbet-erovnuli-liga-2"
+        ]
+    }
+}
+
+
+# 🔧 RESOLVE
+def resolve_league(country: str, league: str):
+    if not league:
+        return None
+
+    country = country.lower()
+    league = league.lower()
+
+    country_map = LEAGUE_ALIASES.get(country, {})
+
+    for canonical, aliases in country_map.items():
+        if league == canonical or league in aliases:
+            return canonical
+
+    return league
+
 
 # 🧪 HEALTH
 @app.get("/")
