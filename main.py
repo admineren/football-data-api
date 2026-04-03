@@ -20,7 +20,7 @@ async def startup():
         DATABASE_URL,
         min_size=1,
         max_size=5,
-        statement_cache_size=0  # 🔥 pgbouncer fix
+        statement_cache_size=0
     )
 
 
@@ -30,7 +30,7 @@ async def shutdown():
     await pool.close()
 
 
-# 🌍 FORMAT
+# 🌍 FORMAT HELPERS
 def format_country(country):
     return country.replace("-", " ").title()
 
@@ -39,7 +39,11 @@ def format_league(country, league):
     return f"{format_country(country)}: {league.replace('-', ' ').title()}"
 
 
-# 🧪 HEALTH (root yerine bunu kullan)
+def format_percent(value):
+    return f"{round(value * 100, 1)}%"
+
+
+# 🧪 HEALTH
 @app.get("/")
 async def health():
     try:
@@ -58,7 +62,7 @@ async def health():
         }
 
 
-# 📊 GLOBAL STATS (çok önemli endpoint)
+# 📊 GLOBAL STATS
 @app.get("/stats")
 async def stats():
     try:
@@ -82,14 +86,14 @@ async def stats():
             "total_matches": total,
             "with_odds": with_odds,
             "no_odds": no_odds,
-            "odds_coverage": round(coverage, 3)
+            "odds_coverage": format_percent(coverage)
         }
 
     except Exception as e:
         return {"error": str(e)}
 
 
-# ⚽ MATCHES (pagination + optional country)
+# ⚽ MATCHES
 @app.get("/matches")
 async def get_matches(
     country: str = None,
@@ -119,6 +123,7 @@ async def get_matches(
 
         return [
             {
+                "country": format_country(r["country"]),
                 "league": format_league(r["country"], r["league"]),
                 "match": f"{r['home_team']} vs {r['away_team']}",
                 "ht_score": f"{r['ht_home']}-{r['ht_away']}" if r["ht_home"] is not None else None,
@@ -157,7 +162,11 @@ async def leagues_summary(country: str):
                     "league": row["league"].replace("-", " ").title(),
                     "total_matches": row["total_matches"],
                     "with_odds": row["with_odds"],
-                    "no_odds": row["no_odds"]
+                    "no_odds": row["no_odds"],
+                    "coverage": format_percent(
+                        (row["with_odds"] / row["total_matches"])
+                        if row["total_matches"] > 0 else 0
+                    )
                 }
                 for row in rows
             ]
