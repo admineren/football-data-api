@@ -12,7 +12,7 @@ if not DATABASE_URL:
 pool = None
 
 
-# 🚀 STARTUP → pool oluştur
+# 🚀 STARTUP
 @app.on_event("startup")
 async def startup():
     global pool
@@ -24,52 +24,72 @@ async def startup():
     )
 
 
-# 🔚 SHUTDOWN → kapat
+# 🔚 SHUTDOWN
 @app.on_event("shutdown")
 async def shutdown():
     await pool.close()
 
-# Ülke Format
+
+# 🌍 FORMAT
 def format_country(country):
     return country.replace("-", " ").title()
 
 
-# 🎯 league format
 def format_league(country, league):
-    country = country.replace("-", " ").title()
-    league = league.replace("-", " ").title()
-    return f"{country}: {league}"
+    return f"{format_country(country)}: {league.replace('-', ' ').title()}"
 
 
-# 🏠 root
+# 🧪 HEALTH (root yerine bunu kullan)
 @app.get("/")
-async def home():
-    return {"status": "running"}
-
-
-# 🧪 sağlık
-@app.get("/health")
 async def health():
     try:
         async with pool.acquire() as conn:
             await conn.fetch("SELECT 1")
-        return {"database": "connected"}
+
+        return {
+            "status": "ok",
+            "database": "connected"
+        }
+
     except Exception as e:
-        return {"database": "error", "detail": str(e)}
+        return {
+            "status": "error",
+            "detail": str(e)
+        }
 
 
-# 📊 toplam
+# 📊 GLOBAL STATS (çok önemli endpoint)
 @app.get("/stats")
 async def stats():
     try:
         async with pool.acquire() as conn:
-            row = await conn.fetchrow("SELECT COUNT(*) FROM matches")
-        return {"total_matches": row[0]}
+
+            row = await conn.fetchrow("""
+                SELECT 
+                    COUNT(*) as total,
+                    COUNT(*) FILTER (WHERE has_odds = true) as with_odds,
+                    COUNT(*) FILTER (WHERE has_odds = false) as no_odds
+                FROM matches
+            """)
+
+        total = row["total"]
+        with_odds = row["with_odds"]
+        no_odds = row["no_odds"]
+
+        coverage = (with_odds / total) if total > 0 else 0
+
+        return {
+            "total_matches": total,
+            "with_odds": with_odds,
+            "no_odds": no_odds,
+            "odds_coverage": round(coverage, 3)
+        }
+
     except Exception as e:
         return {"error": str(e)}
 
 
-# MATCHES DB - PAGINATION 
+# ⚽ MATCHES (pagination + optional country)
 @app.get("/matches")
 async def get_matches(
     country: str = None,
@@ -111,7 +131,8 @@ async def get_matches(
     except Exception as e:
         return {"error": str(e)}
 
-# LEAGUE SUMMARY - COUNTRY AND LEAGUES
+
+# 📊 LEAGUE SUMMARY
 @app.get("/leagues/summary")
 async def leagues_summary(country: str):
     try:
@@ -144,4 +165,3 @@ async def leagues_summary(country: str):
 
     except Exception as e:
         return {"error": str(e)}
-        
