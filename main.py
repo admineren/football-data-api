@@ -1,23 +1,13 @@
-from fastapi import FastAPI
-import psycopg2
 import os
 import asyncpg
+from fastapi import FastAPI
 
 app = FastAPI()
 
+DATABASE_URL = os.getenv("DATABASE_URL")
 
-# 🔥 DB bağlantı
-def get_conn():
-    db_url = os.getenv("DATABASE_URL")
-
-    if not db_url:
-        raise Exception("DATABASE_URL bulunamadı")
-
-    return psycopg2.connect(
-        db_url,
-        sslmode="require",
-        connect_timeout=10
-    )
+if not DATABASE_URL:
+    raise ValueError("DATABASE_URL bulunamadı!")
 
 
 # 🎯 league format
