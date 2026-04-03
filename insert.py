@@ -4,6 +4,9 @@ import csv
 import os
 import sys
 from datetime import datetime
+from glob import glob
+from tqdm import tqdm
+import time
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
@@ -11,10 +14,12 @@ if not DATABASE_URL:
     raise ValueError("DATABASE_URL bulunamadı!")
 
 if len(sys.argv) < 2:
-    print("Kullanım: python insert.py file.csv")
+    print("Kullanım:")
+    print("python insert.py file.csv")
+    print("python insert.py klasor/")
     exit()
 
-CSV_FILE = sys.argv[1]
+TARGET = sys.argv[1]
 
 
 # 🔒 dönüşümler
@@ -43,119 +48,149 @@ def safe_date(val):
         return None
 
 
-async def insert_data():
-    conn = await asyncpg.connect(DATABASE_URL)
+# 🔥 tek satırı tuple'a çevir
+def transform(row):
+    return (
+        row.get("match_id"),
+        row.get("country"),
+        row.get("league"),
+        safe_int(row.get("season")),
 
+        row.get("home_team"),
+        row.get("away_team"),
+        safe_date(row.get("date")),
+        row.get("time") if row.get("time") else None,
+
+        safe_int(row.get("ht_home")),
+        safe_int(row.get("ht_away")),
+        safe_int(row.get("ft_home")),
+        safe_int(row.get("ft_away")),
+
+        safe_int(row.get("ht_total_goals")),
+        safe_int(row.get("ft_total_goals")),
+        safe_int(row.get("goal_diff")),
+        row.get("result"),
+        row.get("ht_ft"),
+        safe_bool(row.get("has_odds")),
+
+        row.get("bookmaker_1x2"),
+        safe_float(row.get("home_odds")),
+        safe_float(row.get("draw_odds")),
+        safe_float(row.get("away_odds")),
+
+        row.get("bookmaker_ou1.5"),
+        safe_float(row.get("ou1.5_over")),
+        safe_float(row.get("ou1.5_under")),
+        row.get("bookmaker_ou2.5"),
+        safe_float(row.get("ou2.5_over")),
+        safe_float(row.get("ou2.5_under")),
+        row.get("bookmaker_ou3.5"),
+        safe_float(row.get("ou3.5_over")),
+        safe_float(row.get("ou3.5_under")),
+        row.get("bookmaker_ou4.5"),
+        safe_float(row.get("ou4.5_over")),
+        safe_float(row.get("ou4.5_under")),
+
+        row.get("bookmaker_btts"),
+        safe_float(row.get("btts_yes")),
+        safe_float(row.get("btts_no")),
+
+        row.get("bookmaker_ah"),
+        row.get("ah_line"),
+        safe_float(row.get("ah_home")),
+        safe_float(row.get("ah_away")),
+    )
+
+
+# 🚀 SQL
+INSERT_SQL = """
+INSERT INTO matches (
+    match_id, country, league, season,
+    home_team, away_team, date, time,
+    ht_home, ht_away, ft_home, ft_away,
+    ht_total_goals, ft_total_goals,
+    goal_diff, result, ht_ft, has_odds,
+    bookmaker_1x2, home_odds, draw_odds, away_odds,
+    bookmaker_ou1_5, ou1_5_over, ou1_5_under,
+    bookmaker_ou2_5, ou2_5_over, ou2_5_under,
+    bookmaker_ou3_5, ou3_5_over, ou3_5_under,
+    bookmaker_ou4_5, ou4_5_over, ou4_5_under,
+    bookmaker_btts, btts_yes, btts_no,
+    bookmaker_ah, ah_line, ah_home, ah_away
+)
+VALUES (
+    $1,$2,$3,$4,$5,$6,$7,$8,
+    $9,$10,$11,$12,
+    $13,$14,$15,$16,$17,$18,
+    $19,$20,$21,$22,
+    $23,$24,$25,$26,$27,$28,
+    $29,$30,$31,$32,$33,$34,
+    $35,$36,$37,
+    $38,$39,$40,$41
+)
+ON CONFLICT (match_id) DO NOTHING
+"""
+
+
+# 🔥 batch insert
+async def process_file(conn, file_path, batch_size=500):
     inserted = 0
     skipped = 0
 
-    with open(CSV_FILE, newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
+    with open(file_path, newline="", encoding="utf-8") as f:
+        reader = list(csv.DictReader(f))
+        total = len(reader)
 
-        for row in reader:
+        print(f"\n📂 FILE: {file_path} | Rows: {total}")
+
+        start = time.time()
+        batch = []
+
+        for i, row in enumerate(tqdm(reader, desc="Importing", unit="rows")):
             try:
-                await conn.execute("""
-                    INSERT INTO matches (
-                        match_id, country, league, season,
-                        home_team, away_team, date, time,
+                batch.append(transform(row))
 
-                        ht_home, ht_away, ft_home, ft_away,
+                if len(batch) >= batch_size:
+                    await conn.executemany(INSERT_SQL, batch)
+                    inserted += len(batch)
+                    batch.clear()
 
-                        ht_total_goals, ft_total_goals,
-                        goal_diff, result, ht_ft, has_odds,
-
-                        bookmaker_1x2, home_odds, draw_odds, away_odds,
-
-                        bookmaker_ou1_5, ou1_5_over, ou1_5_under,
-                        bookmaker_ou2_5, ou2_5_over, ou2_5_under,
-                        bookmaker_ou3_5, ou3_5_over, ou3_5_under,
-                        bookmaker_ou4_5, ou4_5_over, ou4_5_under,
-
-                        bookmaker_btts, btts_yes, btts_no,
-
-                        bookmaker_ah, ah_line, ah_home, ah_away
-                    )
-                    VALUES (
-                        $1,$2,$3,$4,$5,$6,$7,$8,
-                        $9,$10,$11,$12,
-                        $13,$14,$15,$16,$17,$18,
-                        $19,$20,$21,$22,
-                        $23,$24,$25,$26,$27,$28,
-                        $29,$30,$31,$32,$33,$34,
-                        $35,$36,$37,
-                        $38,$39,$40,$41
-                    )
-                    ON CONFLICT (match_id) DO NOTHING
-                """,
-
-                # BASIC
-                row.get("match_id"),
-                row.get("country"),
-                row.get("league"),
-                safe_int(row.get("season")),
-
-                row.get("home_team"),
-                row.get("away_team"),
-                safe_date(row.get("date")),
-                row.get("time") if row.get("time") else None,
-
-                # SCORE
-                safe_int(row.get("ht_home")),
-                safe_int(row.get("ht_away")),
-                safe_int(row.get("ft_home")),
-                safe_int(row.get("ft_away")),
-
-                # DERIVED
-                safe_int(row.get("ht_total_goals")),
-                safe_int(row.get("ft_total_goals")),
-                safe_int(row.get("goal_diff")),
-                row.get("result"),
-                row.get("ht_ft"),
-                safe_bool(row.get("has_odds")),
-
-                # 1X2
-                row.get("bookmaker_1x2"),
-                safe_float(row.get("home_odds")),
-                safe_float(row.get("draw_odds")),
-                safe_float(row.get("away_odds")),
-
-                # OU
-                row.get("bookmaker_ou1.5"),
-                safe_float(row.get("ou1.5_over")),
-                safe_float(row.get("ou1.5_under")),
-                row.get("bookmaker_ou2.5"),
-                safe_float(row.get("ou2.5_over")),
-                safe_float(row.get("ou2.5_under")),
-                row.get("bookmaker_ou3.5"),
-                safe_float(row.get("ou3.5_over")),
-                safe_float(row.get("ou3.5_under")),
-                row.get("bookmaker_ou4.5"),
-                safe_float(row.get("ou4.5_over")),
-                safe_float(row.get("ou4.5_under")),
-
-                # BTTS
-                row.get("bookmaker_btts"),
-                safe_float(row.get("btts_yes")),
-                safe_float(row.get("btts_no")),
-
-                # AH
-                row.get("bookmaker_ah"),
-                row.get("ah_line"),
-                safe_float(row.get("ah_home")),
-                safe_float(row.get("ah_away")),
-                )
-
-                inserted += 1
-
-            except Exception as e:
+            except:
                 skipped += 1
-                print("HATALI SATIR:", e)
-                print("ROW:", row)
+
+            # ETA info
+            if (i + 1) % 1000 == 0:
+                elapsed = time.time() - start
+                rate = (i + 1) / elapsed
+                eta = (total - (i + 1)) / rate if rate > 0 else 0
+
+                print(f"\n📊 {i+1}/{total} | {rate:.1f} row/s | ETA: {eta:.1f}s")
+
+        # kalan batch
+        if batch:
+            await conn.executemany(INSERT_SQL, batch)
+            inserted += len(batch)
+
+    print(f"✅ DONE: {file_path}")
+    print(f"Inserted: {inserted}, Skipped: {skipped}")
+
+
+# 🚀 MAIN
+async def main():
+    conn = await asyncpg.connect(DATABASE_URL)
+
+    # 🔥 tek dosya mı klasör mü
+    if os.path.isfile(TARGET):
+        files = [TARGET]
+    else:
+        files = glob(os.path.join(TARGET, "*.csv"))
+
+    print(f"\n🚀 TOTAL FILES: {len(files)}")
+
+    for file in files:
+        await process_file(conn, file)
 
     await conn.close()
 
-    print(f"Inserted: {inserted}")
-    print(f"Skipped: {skipped}")
 
-
-asyncio.run(insert_data())
+asyncio.run(main())
