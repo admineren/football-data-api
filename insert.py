@@ -48,7 +48,7 @@ def safe_date(val):
         return None
 
 
-# 🔥 tek satırı tuple'a çevir
+# 🔥 row → tuple
 def transform(row):
     return (
         row.get("match_id"),
@@ -59,7 +59,7 @@ def transform(row):
         row.get("home_team"),
         row.get("away_team"),
         safe_date(row.get("date")),
-        row.get("time") if row.get("time") else None,
+        row.get("time") or None,
 
         safe_int(row.get("ht_home")),
         safe_int(row.get("ht_away")),
@@ -102,7 +102,6 @@ def transform(row):
     )
 
 
-# 🚀 SQL
 INSERT_SQL = """
 INSERT INTO matches (
     match_id, country, league, season,
@@ -132,8 +131,8 @@ ON CONFLICT (match_id) DO NOTHING
 """
 
 
-# 🔥 batch insert
-async def process_file(conn, file_path, batch_size=500):
+# 🚀 FILE PROCESS
+async def process_file(pool, file_path, batch_size=500):
     inserted = 0
     skipped = 0
 
@@ -141,11 +140,12 @@ async def process_file(conn, file_path, batch_size=500):
         reader = list(csv.DictReader(f))
         total = len(reader)
 
-        print(f"\n📂 FILE: {file_path} | Rows: {total}")
+    print(f"\n📂 FILE: {file_path} | Rows: {total}")
 
-        start = time.time()
-        batch = []
+    start = time.time()
+    batch = []
 
+    async with pool.acquire() as conn:
         for i, row in enumerate(tqdm(reader, desc="Importing", unit="rows")):
             try:
                 batch.append(transform(row))
@@ -155,10 +155,10 @@ async def process_file(conn, file_path, batch_size=500):
                     inserted += len(batch)
                     batch.clear()
 
-            except:
+            except Exception as e:
                 skipped += 1
+                print("❌ ERROR:", e)
 
-            # ETA info
             if (i + 1) % 1000 == 0:
                 elapsed = time.time() - start
                 rate = (i + 1) / elapsed
@@ -166,7 +166,6 @@ async def process_file(conn, file_path, batch_size=500):
 
                 print(f"\n📊 {i+1}/{total} | {rate:.1f} row/s | ETA: {eta:.1f}s")
 
-        # kalan batch
         if batch:
             await conn.executemany(INSERT_SQL, batch)
             inserted += len(batch)
@@ -177,20 +176,24 @@ async def process_file(conn, file_path, batch_size=500):
 
 # 🚀 MAIN
 async def main():
-    conn = await asyncpg.connect(DATABASE_URL)
+    pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
 
-    # 🔥 tek dosya mı klasör mü
     if os.path.isfile(TARGET):
         files = [TARGET]
     else:
-        files = glob(os.path.join(TARGET, "*.csv"))
+        files = sorted(glob(os.path.join(TARGET, "*.csv")))
+
+    if not files:
+        print("❌ CSV bulunamadı!")
+        return
 
     print(f"\n🚀 TOTAL FILES: {len(files)}")
 
     for file in files:
-        await process_file(conn, file)
+        await process_file(pool, file)
 
-    await conn.close()
+    await pool.close()
+    print("\n🎯 ALL DONE")
 
 
 asyncio.run(main())
