@@ -14,6 +14,10 @@ if not DATABASE_URL:
 def format_league(country, league):
     return f"{country.title()}: {league.replace('-', ' ').title()}"
 
+# Get Conn
+async def get_conn():
+    return await asyncpg.connect(DATABASE_URL)
+
 
 # 🏠 root
 @app.get("/")
