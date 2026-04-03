@@ -14,46 +14,46 @@ if not DATABASE_URL:
 def format_league(country, league):
     return f"{country.title()}: {league.replace('-', ' ').title()}"
 
-# Get Conn
+
+# 🔌 DB bağlantı
 async def get_conn():
     return await asyncpg.connect(DATABASE_URL)
 
 
 # 🏠 root
 @app.get("/")
-def home():
+async def home():
     return {"status": "running"}
 
 
 # 🧪 DB sağlık kontrolü
 @app.get("/health")
-def health():
+async def health():
     try:
-        conn = get_conn()
-        cur = conn.cursor()
-        cur.execute("SELECT 1")
-        cur.close()
-        conn.close()
+        conn = await get_conn()
+
+        await conn.fetch("SELECT 1")
+
+        await conn.close()
+
         return {"database": "connected"}
+
     except Exception as e:
         return {"database": "error", "detail": str(e)}
 
 
 # 📊 toplam maç sayısı
 @app.get("/stats")
-def stats():
+async def stats():
     try:
-        conn = get_conn()
-        cur = conn.cursor()
+        conn = await get_conn()
 
-        cur.execute("SELECT COUNT(*) FROM matches;")
-        total = cur.fetchone()[0]
+        row = await conn.fetchrow("SELECT COUNT(*) FROM matches")
 
-        cur.close()
-        conn.close()
+        await conn.close()
 
         return {
-            "total_matches": total
+            "total_matches": row[0]
         }
 
     except Exception as e:
@@ -62,12 +62,11 @@ def stats():
 
 # ⚽ maç listesi (sade)
 @app.get("/matches")
-def get_matches():
+async def get_matches():
     try:
-        conn = get_conn()
-        cur = conn.cursor()
+        conn = await get_conn()
 
-        cur.execute("""
+        rows = await conn.fetch("""
             SELECT 
                 country,
                 league,
@@ -83,20 +82,17 @@ def get_matches():
             LIMIT 50;
         """)
 
-        rows = cur.fetchall()
-
-        cur.close()
-        conn.close()
+        await conn.close()
 
         data = []
 
         for r in rows:
             data.append({
-                "league": format_league(r[0], r[1]),
-                "match": f"{r[2]} vs {r[3]}",
-                "ht_score": f"{r[4]}-{r[5]}" if r[4] is not None else None,
-                "ft_score": f"{r[6]}-{r[7]}" if r[6] is not None else None,
-                "has_odds": r[8]
+                "league": format_league(r["country"], r["league"]),
+                "match": f"{r['home_team']} vs {r['away_team']}",
+                "ht_score": f"{r['ht_home']}-{r['ht_away']}" if r["ht_home"] is not None else None,
+                "ft_score": f"{r['ft_home']}-{r['ft_away']}" if r["ft_home"] is not None else None,
+                "has_odds": r["has_odds"]
             })
 
         return data
@@ -104,33 +100,39 @@ def get_matches():
     except Exception as e:
         return {"error": str(e)}
 
+
+# 📊 lig özet
 @app.get("/leagues/summary")
 async def leagues_summary(country: str):
-    conn = await asyncpg.connect(DATABASE_URL)
+    try:
+        conn = await get_conn()
 
-    rows = await conn.fetch("""
-        SELECT 
-            league,
-            COUNT(*) as total_matches,
-            COUNT(*) FILTER (WHERE has_odds = true) as with_odds,
-            COUNT(*) FILTER (WHERE has_odds = false) as no_odds
-        FROM matches
-        WHERE country = $1
-        GROUP BY league
-        ORDER BY total_matches DESC;
-    """, country.lower())
+        rows = await conn.fetch("""
+            SELECT 
+                league,
+                COUNT(*) as total_matches,
+                COUNT(*) FILTER (WHERE has_odds = true) as with_odds,
+                COUNT(*) FILTER (WHERE has_odds = false) as no_odds
+            FROM matches
+            WHERE country = $1
+            GROUP BY league
+            ORDER BY total_matches DESC;
+        """, country.lower())
 
-    await conn.close()
+        await conn.close()
 
-    return {
-        "country": country.title(),
-        "leagues": [
-            {
-                "league": row["league"].replace("-", " ").title(),
-                "total_matches": row["total_matches"],
-                "with_odds": row["with_odds"],
-                "no_odds": row["no_odds"]
-            }
-            for row in rows
-        ]
-    }
+        return {
+            "country": country.title(),
+            "leagues": [
+                {
+                    "league": row["league"].replace("-", " ").title(),
+                    "total_matches": row["total_matches"],
+                    "with_odds": row["with_odds"],
+                    "no_odds": row["no_odds"]
+                }
+                for row in rows
+            ]
+        }
+
+    except Exception as e:
+        return {"error": str(e)}
