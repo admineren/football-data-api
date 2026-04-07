@@ -44,6 +44,7 @@ def format_percent(value):
 
 # 🔥 LEAGUE ALIASES
 LEAGUE_ALIASES = {
+
     "georgia": {
         "erovnuli-liga": [
             "umaglesi-liga",
@@ -53,7 +54,15 @@ LEAGUE_ALIASES = {
             "pirveli-liga",
             "crystalbet-erovnuli-liga-2"
         ]
+    },
+
+    "kenya": {
+        "fkf-cup": [
+            "shield-cup",
+            "fkf-mozzart-bet-cup"
+        ]
     }
+
 }
 
 
