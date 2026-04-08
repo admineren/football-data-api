@@ -302,6 +302,7 @@ async def team_stats(
         return {"error": "No data"}
 
     # ================= INIT =================
+
     played = len(rows)
 
     wins = draws = losses = 0
@@ -316,11 +317,18 @@ async def team_stats(
     clean_total = clean_home = clean_away = 0
     btts_total = btts_home = btts_away = 0
 
-    score_dist = {"0": 0, "1": 0, "2": 0, "3_plus": 0}
+    # 🔥 NEW RANGE DIST
+    score_dist = {
+        "0_1": 0,
+        "2_3": 0,
+        "4_5": 0,
+        "6_plus": 0
+    }
 
-    score_patterns = {"overall": {}, "home": {}, "away": {}}
+    # ❌ overall kaldırıldı
+    score_patterns = {"home": {}, "away": {}}
+
     ht_patterns = {}
-
     ht_ft_patterns = {"home": {}, "away": {}}
 
     # ================= HELPERS =================
@@ -342,38 +350,37 @@ async def team_stats(
         ft_h = r["ft_home"]
         ft_a = r["ft_away"]
 
-        # team perspective
+        # TEAM PERSPECTIVE
         if is_home:
             s, c = ft_h, ft_a
             home_played += 1
             home_scored += s
             home_conceded += c
-
-            res = team_result(s, c)
-
-            if res == "W": home_wins += 1
-            elif res == "L": home_losses += 1
-            else: home_draws += 1
-
         else:
             s, c = ft_a, ft_h
             away_played += 1
             away_scored += s
             away_conceded += c
 
-            res = team_result(s, c)
+        res = team_result(s, c)
 
-            if res == "W": away_wins += 1
-            elif res == "L": away_losses += 1
-            else: away_draws += 1
-
-        # overall
+        # OVERALL
         scored += s
         conceded += c
 
         if res == "W": wins += 1
         elif res == "L": losses += 1
         else: draws += 1
+
+        # HOME / AWAY RESULT
+        if is_home:
+            if res == "W": home_wins += 1
+            elif res == "L": home_losses += 1
+            else: home_draws += 1
+        else:
+            if res == "W": away_wins += 1
+            elif res == "L": away_losses += 1
+            else: away_draws += 1
 
         # CLEAN SHEET
         if c == 0:
@@ -387,25 +394,28 @@ async def team_stats(
             if is_home: btts_home += 1
             else: btts_away += 1
 
-        # SCORE DIST
-        if s == 0: score_dist["0"] += 1
-        elif s == 1: score_dist["1"] += 1
-        elif s == 2: score_dist["2"] += 1
-        else: score_dist["3_plus"] += 1
+        # ================= RANGE GOALS =================
+
+        if s <= 1:
+            score_dist["0_1"] += 1
+        elif s <= 3:
+            score_dist["2_3"] += 1
+        elif s <= 5:
+            score_dist["4_5"] += 1
+        else:
+            score_dist["6_plus"] += 1
 
         # ================= SCORE PATTERNS =================
 
         pattern = f"{ft_h}-{ft_a}"
+        role = "home" if is_home else "away"
 
-        def add_pattern(bucket, key, res):
-            if key not in bucket:
-                bucket[key] = {"count": 0, "result": res}
-            bucket[key]["count"] += 1
+        if pattern not in score_patterns[role]:
+            score_patterns[role][pattern] = {"count": 0, "result": res}
 
-        add_pattern(score_patterns["overall"], pattern, res)
-        add_pattern(score_patterns["home" if is_home else "away"], pattern, res)
+        score_patterns[role][pattern]["count"] += 1
 
-        # ================= HT PATTERNS =================
+        # ================= HT =================
 
         ht_h = r["ht_home"]
         ht_a = r["ht_away"]
@@ -428,7 +438,7 @@ async def team_stats(
 
             ht_patterns[ht_pattern]["count"] += 1
 
-        # ================= HT/FT PATTERNS =================
+        # ================= HT/FT =================
 
         htft = r.get("ht_ft")
 
@@ -522,7 +532,6 @@ async def team_stats(
         "scoring_distribution": score_dist,
 
         "score_patterns": {
-            "overall": top5_patterns(score_patterns["overall"]),
             "home": top5_patterns(score_patterns["home"]),
             "away": top5_patterns(score_patterns["away"])
         },
