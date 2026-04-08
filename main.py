@@ -2,10 +2,14 @@ import os
 import asyncpg
 import jwt
 from datetime import datetime, timedelta
-from fastapi import FastAPI, Query, Request, HTTPException
+from fastapi import FastAPI, Query, HTTPException, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 
 app = FastAPI()
+
+# 🔐 SECURITY
+security = HTTPBearer()
 
 # ENV
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -37,15 +41,10 @@ async def shutdown():
     await pool.close()
 
 
-# 🔐 TOKEN KONTROL
-def check_token(request: Request):
-    auth = request.headers.get("Authorization")
-
-    if not auth or not auth.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="No token")
-
+# 🔐 TOKEN KONTROL (SWAGGER UYUMLU)
+def check_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
     try:
-        token = auth.split(" ")[1]
+        token = credentials.credentials
         jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
     except:
         raise HTTPException(status_code=401, detail="Invalid token")
@@ -57,7 +56,7 @@ class LoginRequest(BaseModel):
     password: str
 
 
-# 🔑 LOGIN ENDPOINT
+# 🔑 LOGIN
 @app.post("/login")
 def login(data: LoginRequest):
 
@@ -125,8 +124,8 @@ async def health():
 
 # 📊 STATS (KORUMALI)
 @app.get("/stats")
-async def stats(request: Request):
-    check_token(request)
+async def stats(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    check_token(credentials)
 
     async with pool.acquire() as conn:
         row = await conn.fetchrow("""
@@ -153,12 +152,12 @@ async def stats(request: Request):
 # ⚽ MATCHES (KORUMALI)
 @app.get("/matches")
 async def get_matches(
-    request: Request,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
     country: str = None,
     limit: int = Query(50, le=200),
     offset: int = 0
 ):
-    check_token(request)
+    check_token(credentials)
 
     async with pool.acquire() as conn:
 
@@ -195,8 +194,11 @@ async def get_matches(
 
 # 📊 LEAGUE SUMMARY (KORUMALI)
 @app.get("/leagues/summary")
-async def leagues_summary(request: Request, country: str):
-    check_token(request)
+async def leagues_summary(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    country: str = None
+):
+    check_token(credentials)
 
     async with pool.acquire() as conn:
         rows = await conn.fetch("""
