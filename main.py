@@ -558,7 +558,7 @@ async def league_stats(
     async with pool.acquire() as conn:
 
         # =========================
-        # CORE DATA
+        # CORE + GOALS
         # =========================
         core = await conn.fetchrow("""
             SELECT
@@ -570,28 +570,28 @@ async def league_stats(
 
                 SUM(ft_home + ft_away) as total_goals,
 
-                COUNT(*) FILTER (
-                    WHERE ft_home > 0 AND ft_away > 0
-                ) as btts,
+                COUNT(*) FILTER (WHERE ft_home > 0 AND ft_away > 0) as btts,
+                COUNT(*) FILTER (WHERE ft_home = 0 OR ft_away = 0) as clean_sheets,
 
-                COUNT(*) FILTER (
-                    WHERE ft_home = 0 OR ft_away = 0
-                ) as clean_sheets,
+                -- HOME GOAL DIST
+                COUNT(*) FILTER (WHERE ft_home <= 1) as home_0_1,
+                COUNT(*) FILTER (WHERE ft_home BETWEEN 2 AND 3) as home_2_3,
+                COUNT(*) FILTER (WHERE ft_home BETWEEN 4 AND 5) as home_4_5,
+                COUNT(*) FILTER (WHERE ft_home >= 6) as home_6_plus,
 
-                COUNT(*) FILTER (
-                    WHERE ABS(ft_home - ft_away) = 1
-                ) as one_goal,
-
-                COUNT(*) FILTER (
-                    WHERE ABS(ft_home - ft_away) >= 3
-                ) as high_margin
+                -- AWAY GOAL DIST
+                COUNT(*) FILTER (WHERE ft_away <= 1) as away_0_1,
+                COUNT(*) FILTER (WHERE ft_away BETWEEN 2 AND 3) as away_2_3,
+                COUNT(*) FILTER (WHERE ft_away BETWEEN 4 AND 5) as away_4_5,
+                COUNT(*) FILTER (WHERE ft_away >= 6) as away_6_plus
 
             FROM matches
             WHERE country = $1 AND league = $2
+              AND ft_home IS NOT NULL AND ft_away IS NOT NULL
         """, country.lower(), league.lower())
 
         # =========================
-        # ODDS DATA
+        # ODDS
         # =========================
         odds = await conn.fetchrow("""
             SELECT
@@ -620,6 +620,20 @@ async def league_stats(
         """, country.lower(), league.lower())
 
         # =========================
+        # HT/FT (ONLY VALID HT)
+        # =========================
+        ht_rows = await conn.fetch("""
+            SELECT ht_home, ht_away, ft_home, ft_away
+            FROM matches
+            WHERE country = $1
+              AND league = $2
+              AND ht_home IS NOT NULL
+              AND ht_away IS NOT NULL
+              AND ft_home IS NOT NULL
+              AND ft_away IS NOT NULL
+        """, country.lower(), league.lower())
+
+        # =========================
         # HELPERS
         # =========================
         def rate(a, b):
@@ -628,8 +642,13 @@ async def league_stats(
         def percent(v):
             return f"{round(v * 100, 1)}%"
 
+        def res(h, a):
+            if h > a: return "1"
+            if h < a: return "2"
+            return "0"
+
         # =========================
-        # CALCULATIONS
+        # BASE
         # =========================
         total = core["total"]
 
@@ -637,27 +656,88 @@ async def league_stats(
         draws = core["draws"]
         away_wins = core["away_wins"]
 
-        avg_goals = (core["total_goals"] / total) if total else 0
+        total_goals = core["total_goals"] or 0
 
-        # advantage
+        # =========================
+        # BASIC CALC
+        # =========================
         home_rate = rate(home_wins, total)
+        draw_rate = rate(draws, total)
         away_rate = rate(away_wins, total)
+
         advantage = home_rate - away_rate
 
-        # competitiveness
-        draw_rate = rate(draws, total)
-        one_goal_rate = rate(core["one_goal"], total)
-        high_margin_rate = rate(core["high_margin"], total)
+        avg_goals = total_goals / total if total else 0
 
-        # scoring
         btts_rate = rate(core["btts"], total)
-        clean_sheet_rate = rate(core["clean_sheets"], total)
+        clean_rate = rate(core["clean_sheets"], total)
 
-        # odds
+        # =========================
+        # GOAL DIST (COUNT)
+        # =========================
+        home_dist = {
+            "0_1": core["home_0_1"],
+            "2_3": core["home_2_3"],
+            "4_5": core["home_4_5"],
+            "6_plus": core["home_6_plus"]
+        }
+
+        away_dist = {
+            "0_1": core["away_0_1"],
+            "2_3": core["away_2_3"],
+            "4_5": core["away_4_5"],
+            "6_plus": core["away_6_plus"]
+        }
+
+        # =========================
+        # HT/FT
+        # =========================
+        htft_home = {}
+        htft_away = {}
+
+        comeback = 0
+        collapse = 0
+        lead_win = 0
+
+        for r in ht_rows:
+
+            ht_h, ht_a = r["ht_home"], r["ht_away"]
+            ft_h, ft_a = r["ft_home"], r["ft_away"]
+
+            ht_res = res(ht_h, ht_a)
+            ft_res = res(ft_h, ft_a)
+
+            key = f"{ht_res}/{ft_res}"
+
+            # home perspective
+            htft_home[key] = htft_home.get(key, 0) + 1
+
+            # away perspective (reverse)
+            ht_res_away = res(ht_a, ht_h)
+            ft_res_away = res(ft_a, ft_h)
+            key_away = f"{ht_res_away}/{ft_res_away}"
+
+            htft_away[key_away] = htft_away.get(key_away, 0) + 1
+
+            # =====================
+            # GAME FLOW SUMMARY
+            # =====================
+            if ht_res == "1" and ft_res == "1":
+                lead_win += 1
+
+            if ht_res == "2" and ft_res == "1":
+                comeback += 1
+
+            if ht_res == "1" and ft_res == "2":
+                collapse += 1
+
+        # =========================
+        # ODDS CALC
+        # =========================
         odds_total = odds["total"]
 
-        favorite_rate = rate(odds["favorite_wins"], odds_total)
-        underdog_rate = rate(odds["underdog_wins"], odds_total)
+        favorite_rate = percent(rate(odds["favorite_wins"], odds_total))
+        underdog_rate = percent(rate(odds["underdog_wins"], odds_total))
 
         # =========================
         # RESPONSE
@@ -683,18 +763,29 @@ async def league_stats(
 
             "scoring": {
                 "avg_goals": round(avg_goals, 2),
-                "clean_sheet_rate": percent(clean_sheet_rate),
-                "btts_rate": percent(btts_rate)
-            },
+                "clean_sheet_rate": percent(clean_rate),
+                "btts_rate": percent(btts_rate),
 
-            "competitiveness": {
-                "draw_rate": percent(draw_rate),
-                "one_goal_margin_rate": percent(one_goal_rate),
-                "high_margin_rate": percent(high_margin_rate)
+                "goal_distribution": {
+                    "home": home_dist,
+                    "away": away_dist
+                }
             },
 
             "predictability": {
-                "favorite_win_rate": percent(favorite_rate),
-                "underdog_win_rate": percent(underdog_rate)
+                "favorite_win_rate": favorite_rate,
+                "underdog_win_rate": underdog_rate
+            },
+
+            "game_flow": {
+                "ht_ft_distribution": {
+                    "home": htft_home,
+                    "away": htft_away
+                },
+                "summary": {
+                    "lead_win_matches": lead_win,
+                    "comeback_matches": comeback,
+                    "collapse_matches": collapse
+                }
             }
         }
