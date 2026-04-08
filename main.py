@@ -3,11 +3,12 @@ import asyncpg
 import jwt
 from datetime import datetime, timedelta
 from fastapi import FastAPI, Query, Request, HTTPException
+from pydantic import BaseModel
 
 app = FastAPI()
 
+# ENV
 DATABASE_URL = os.getenv("DATABASE_URL")
-
 ADMIN_USER = os.getenv("ADMIN_USER")
 ADMIN_PASS = os.getenv("ADMIN_PASS")
 SECRET_KEY = os.getenv("SECRET_KEY")
@@ -40,7 +41,7 @@ async def shutdown():
 def check_token(request: Request):
     auth = request.headers.get("Authorization")
 
-    if not auth:
+    if not auth or not auth.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="No token")
 
     try:
@@ -50,16 +51,22 @@ def check_token(request: Request):
         raise HTTPException(status_code=401, detail="Invalid token")
 
 
-# 🔑 LOGIN
-@app.post("/login")
-def login(username: str, password: str):
+# 🔑 LOGIN MODEL
+class LoginRequest(BaseModel):
+    username: str
+    password: str
 
-    if username != ADMIN_USER or password != ADMIN_PASS:
+
+# 🔑 LOGIN ENDPOINT
+@app.post("/login")
+def login(data: LoginRequest):
+
+    if data.username != ADMIN_USER or data.password != ADMIN_PASS:
         raise HTTPException(status_code=401, detail="Wrong credentials")
 
     token = jwt.encode(
         {
-            "user": username,
+            "user": data.username,
             "exp": datetime.utcnow() + timedelta(hours=12)
         },
         SECRET_KEY,
@@ -103,43 +110,20 @@ LEAGUE_ALIASES = {
 }
 
 
-# 🔧 RESOLVE
-def resolve_league(country: str, league: str):
-    if not league:
-        return None
-
-    country = country.lower()
-    league = league.lower()
-
-    country_map = LEAGUE_ALIASES.get(country, {})
-
-    for canonical, aliases in country_map.items():
-        if league == canonical or league in aliases:
-            return canonical
-
-    return league
-
-
-# 🧪 HEALTH (AÇIK BIRAK)
+# 🧪 HEALTH (AÇIK)
 @app.get("/")
 async def health():
     try:
         async with pool.acquire() as conn:
             await conn.fetch("SELECT 1")
 
-        return {
-            "status": "ok",
-            "database": "connected"
-        }
+        return {"status": "ok", "database": "connected"}
 
     except Exception as e:
-        return {
-            "status": "error",
-            "detail": str(e)
-        }
+        return {"status": "error", "detail": str(e)}
 
 
-# 📊 GLOBAL STATS (KORUMALI)
+# 📊 STATS (KORUMALI)
 @app.get("/stats")
 async def stats(request: Request):
     check_token(request)
@@ -155,14 +139,13 @@ async def stats(request: Request):
 
     total = row["total"]
     with_odds = row["with_odds"]
-    no_odds = row["no_odds"]
 
     coverage = (with_odds / total) if total > 0 else 0
 
     return {
         "total_matches": total,
         "with_odds": with_odds,
-        "no_odds": no_odds,
+        "no_odds": row["no_odds"],
         "odds_coverage": format_percent(coverage)
     }
 
@@ -209,13 +192,13 @@ async def get_matches(
         for r in rows
     ]
 
+
 # 📊 LEAGUE SUMMARY (KORUMALI)
 @app.get("/leagues/summary")
 async def leagues_summary(request: Request, country: str):
     check_token(request)
 
     async with pool.acquire() as conn:
-
         rows = await conn.fetch("""
             SELECT 
                 league,
@@ -243,5 +226,4 @@ async def leagues_summary(request: Request, country: str):
             }
             for row in rows
         ]
-        }
-
+    }
