@@ -274,6 +274,7 @@ async def get_columns(
         for r in rows
     ]
 
+
 @app.get("/team/stats", tags=["Analysis"])
 async def team_stats(
     credentials: HTTPAuthorizationCredentials = Depends(security),
@@ -299,10 +300,7 @@ async def team_stats(
     if not rows:
         return {"error": "No data"}
 
-    # =========================
-    # INIT
-    # =========================
-
+    # ================= INIT =================
     played = len(rows)
     wins = draws = losses = 0
     scored = conceded = 0
@@ -321,136 +319,110 @@ async def team_stats(
     score_patterns = {"overall": {}, "home": {}, "away": {}}
     ht_patterns = {}
 
-    # =========================
-    # LOOP
-    # =========================
+    ht_count = 0  # sadece HT olan maçlar
 
+    # ================= LOOP =================
     for r in rows:
 
         is_home = r["home_team"] == team
 
-        if is_home:
-            s = r["ft_home"]
-            c = r["ft_away"]
+        ft_h = r["ft_home"]
+        ft_a = r["ft_away"]
 
+        if is_home:
+            s, c = ft_h, ft_a
             home_played += 1
             home_scored += s
             home_conceded += c
 
-            if s > c:
-                home_wins += 1
-            elif s < c:
-                home_losses += 1
-            else:
-                home_draws += 1
+            if s > c: home_wins += 1
+            elif s < c: home_losses += 1
+            else: home_draws += 1
 
         else:
-            s = r["ft_away"]
-            c = r["ft_home"]
-
+            s, c = ft_a, ft_h
             away_played += 1
             away_scored += s
             away_conceded += c
 
-            if s > c:
-                away_wins += 1
-            elif s < c:
-                away_losses += 1
-            else:
-                away_draws += 1
+            if s > c: away_wins += 1
+            elif s < c: away_losses += 1
+            else: away_draws += 1
 
         # overall
         scored += s
         conceded += c
 
-        if s > c:
-            wins += 1
-        elif s < c:
-            losses += 1
-        else:
-            draws += 1
+        if s > c: wins += 1
+        elif s < c: losses += 1
+        else: draws += 1
 
-        # =========================
         # CLEAN SHEET
-        # =========================
-
         if c == 0:
             clean_total += 1
-            if is_home:
-                clean_home += 1
-            else:
-                clean_away += 1
+            if is_home: clean_home += 1
+            else: clean_away += 1
 
-        # =========================
         # BTTS
-        # =========================
-
         if s > 0 and c > 0:
             btts_total += 1
-            if is_home:
-                btts_home += 1
-            else:
-                btts_away += 1
+            if is_home: btts_home += 1
+            else: btts_away += 1
 
-        # =========================
-        # SCORE DISTRIBUTION
-        # =========================
+        # SCORE DIST
+        if s == 0: score_dist["0"] += 1
+        elif s == 1: score_dist["1"] += 1
+        elif s == 2: score_dist["2"] += 1
+        else: score_dist["3_plus"] += 1
 
-        if s == 0:
-            score_dist["0"] += 1
-        elif s == 1:
-            score_dist["1"] += 1
-        elif s == 2:
-            score_dist["2"] += 1
-        else:
-            score_dist["3_plus"] += 1
+        # ================= FT PATTERN (ORIGINAL SCORE) =================
+        pattern = f"{ft_h}-{ft_a}"
 
-        # =========================
-        # FT PATTERNS
-        # =========================
+        def add_pattern(bucket, key):
+            bucket[key] = bucket.get(key, 0) + 1
 
-        pattern = f"{s}-{c}"
+        add_pattern(score_patterns["overall"], pattern)
+        add_pattern(score_patterns["home" if is_home else "away"], pattern)
 
-        score_patterns["overall"][pattern] = score_patterns["overall"].get(pattern, 0) + 1
-
-        key = "home" if is_home else "away"
-        score_patterns[key][pattern] = score_patterns[key].get(pattern, 0) + 1
-
-        # =========================
-        # HT PATTERNS (NULL SAFE)
-        # =========================
-
+        # ================= HT PATTERN =================
         ht_h = r["ht_home"]
         ht_a = r["ht_away"]
 
         if ht_h is not None and ht_a is not None:
-            if is_home:
-                ht_s = ht_h
-                ht_c = ht_a
-            else:
-                ht_s = ht_a
-                ht_c = ht_h
+            ht_count += 1
+            ht_pattern = f"{ht_h}-{ht_a}"
+            ht_patterns[ht_pattern] = ht_patterns.get(ht_pattern, 0) + 1
 
-            ht_p = f"{ht_s}-{ht_c}"
-            ht_patterns[ht_p] = ht_patterns.get(ht_p, 0) + 1
-
-    # =========================
-    # HELPERS
-    # =========================
-
+    # ================= HELPERS =================
     def avg(a, b):
         return round(a / b, 2) if b else 0
 
     def rate(a, b):
         return round((a / b) * 100, 1) if b else 0
 
-    def top5(d):
-        return dict(sorted(d.items(), key=lambda x: x[1], reverse=True)[:5])
+    def get_result(score):
+        h, a = map(int, score.split("-"))
+        if h > a: return "H"
+        elif h < a: return "A"
+        return "D"
 
-    # =========================
-    # RESPONSE
-    # =========================
+    def top5_array(d):
+        return [
+            {
+                "score": k,
+                "count": v,
+                "result": get_result(k)
+            }
+            for k, v in sorted(d.items(), key=lambda x: x[1], reverse=True)[:5]
+        ]
 
+    def top5_simple(d):
+        return [
+            {"score": k, "count": v}
+            for k, v in sorted(d.items(), key=lambda x: x[1], reverse=True)[:5]
+        ]
+
+    # ================= RESPONSE =================
     return {
         "team": team,
         "country": country,
@@ -460,10 +432,13 @@ async def team_stats(
             "wins": wins,
             "draws": draws,
             "losses": losses,
-            "scored_total": scored,
-            "conceded_total": conceded,
+
+            "total_goals_scored": scored,
+            "total_goals_conceded": conceded,
+
             "avg_scored": avg(scored, played),
             "avg_conceded": avg(conceded, played),
+
             "clean_sheet_rate": rate(clean_total, played),
             "btts_rate": rate(btts_total, played)
         },
@@ -473,10 +448,13 @@ async def team_stats(
             "wins": home_wins,
             "draws": home_draws,
             "losses": home_losses,
-            "scored_total": home_scored,
-            "conceded_total": home_conceded,
+
+            "total_goals_scored": home_scored,
+            "total_goals_conceded": home_conceded,
+
             "avg_scored": avg(home_scored, home_played),
             "avg_conceded": avg(home_conceded, home_played),
+
             "clean_sheet_rate": rate(clean_home, home_played),
             "btts_rate": rate(btts_home, home_played)
         },
@@ -486,28 +464,24 @@ async def team_stats(
             "wins": away_wins,
             "draws": away_draws,
             "losses": away_losses,
-            "scored_total": away_scored,
-            "conceded_total": away_conceded,
+
+            "total_goals_scored": away_scored,
+            "total_goals_conceded": away_conceded,
+
             "avg_scored": avg(away_scored, away_played),
             "avg_conceded": avg(away_conceded, away_played),
+
             "clean_sheet_rate": rate(clean_away, away_played),
             "btts_rate": rate(btts_away, away_played)
         },
 
-        "advanced": {
-            "scoring_distribution": {
-                "0_goal": score_dist["0"],
-                "1_goal": score_dist["1"],
-                "2_goal": score_dist["2"],
-                "3_plus_goal": score_dist["3_plus"]
-            }
-        },
+        "scoring_distribution": score_dist,
 
         "score_patterns": {
-            "overall": top5(score_patterns["overall"]),
-            "home": top5(score_patterns["home"]),
-            "away": top5(score_patterns["away"])
+            "overall": top5_array(score_patterns["overall"]),
+            "home": top5_array(score_patterns["home"]),
+            "away": top5_array(score_patterns["away"])
         },
 
-        "ht_patterns": top5(ht_patterns)
-                }
+        "ht_patterns": top5_simple(ht_patterns) if ht_count > 0 else []
+    }
