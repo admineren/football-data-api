@@ -289,7 +289,8 @@ async def team_stats(
         rows = await conn.fetch("""
             SELECT 
                 home_team, away_team,
-                ft_home, ft_away
+                ft_home, ft_away,
+                ht_home, ht_away
             FROM matches
             WHERE country = $1
             AND (home_team = $2 OR away_team = $2)
@@ -298,66 +299,157 @@ async def team_stats(
     if not rows:
         return {"error": "No data"}
 
-    # 🔢 GENEL
+    # =========================
+    # INIT
+    # =========================
+
     played = len(rows)
     wins = draws = losses = 0
     scored = conceded = 0
 
-    # 🏠 HOME
     home_played = home_wins = home_draws = home_losses = 0
     home_scored = home_conceded = 0
 
-    # ✈️ AWAY
     away_played = away_wins = away_draws = away_losses = 0
     away_scored = away_conceded = 0
 
+    clean_total = clean_home = clean_away = 0
+    btts_total = btts_home = btts_away = 0
+
+    score_dist = {"0": 0, "1": 0, "2": 0, "3_plus": 0}
+
+    score_patterns = {"overall": {}, "home": {}, "away": {}}
+    ht_patterns = {}
+
+    # =========================
+    # LOOP
+    # =========================
+
     for r in rows:
 
-        # 🏠 HOME
-        if r["home_team"] == team:
-            home_played += 1
-            home_scored += r["ft_home"]
-            home_conceded += r["ft_away"]
+        is_home = r["home_team"] == team
 
-            if r["ft_home"] > r["ft_away"]:
+        if is_home:
+            s = r["ft_home"]
+            c = r["ft_away"]
+
+            home_played += 1
+            home_scored += s
+            home_conceded += c
+
+            if s > c:
                 home_wins += 1
-            elif r["ft_home"] < r["ft_away"]:
+            elif s < c:
                 home_losses += 1
             else:
                 home_draws += 1
 
-            scored += r["ft_home"]
-            conceded += r["ft_away"]
-
-            if r["ft_home"] > r["ft_away"]:
-                wins += 1
-            elif r["ft_home"] < r["ft_away"]:
-                losses += 1
-            else:
-                draws += 1
-
-        # ✈️ AWAY
         else:
-            away_played += 1
-            away_scored += r["ft_away"]
-            away_conceded += r["ft_home"]
+            s = r["ft_away"]
+            c = r["ft_home"]
 
-            if r["ft_away"] > r["ft_home"]:
+            away_played += 1
+            away_scored += s
+            away_conceded += c
+
+            if s > c:
                 away_wins += 1
-            elif r["ft_away"] < r["ft_home"]:
+            elif s < c:
                 away_losses += 1
             else:
                 away_draws += 1
 
-            scored += r["ft_away"]
-            conceded += r["ft_home"]
+        # overall
+        scored += s
+        conceded += c
 
-            if r["ft_away"] > r["ft_home"]:
-                wins += 1
-            elif r["ft_away"] < r["ft_home"]:
-                losses += 1
+        if s > c:
+            wins += 1
+        elif s < c:
+            losses += 1
+        else:
+            draws += 1
+
+        # =========================
+        # CLEAN SHEET
+        # =========================
+
+        if c == 0:
+            clean_total += 1
+            if is_home:
+                clean_home += 1
             else:
-                draws += 1
+                clean_away += 1
+
+        # =========================
+        # BTTS
+        # =========================
+
+        if s > 0 and c > 0:
+            btts_total += 1
+            if is_home:
+                btts_home += 1
+            else:
+                btts_away += 1
+
+        # =========================
+        # SCORE DISTRIBUTION
+        # =========================
+
+        if s == 0:
+            score_dist["0"] += 1
+        elif s == 1:
+            score_dist["1"] += 1
+        elif s == 2:
+            score_dist["2"] += 1
+        else:
+            score_dist["3_plus"] += 1
+
+        # =========================
+        # FT PATTERNS
+        # =========================
+
+        pattern = f"{s}-{c}"
+
+        score_patterns["overall"][pattern] = score_patterns["overall"].get(pattern, 0) + 1
+
+        key = "home" if is_home else "away"
+        score_patterns[key][pattern] = score_patterns[key].get(pattern, 0) + 1
+
+        # =========================
+        # HT PATTERNS (NULL SAFE)
+        # =========================
+
+        ht_h = r["ht_home"]
+        ht_a = r["ht_away"]
+
+        if ht_h is not None and ht_a is not None:
+            if is_home:
+                ht_s = ht_h
+                ht_c = ht_a
+            else:
+                ht_s = ht_a
+                ht_c = ht_h
+
+            ht_p = f"{ht_s}-{ht_c}"
+            ht_patterns[ht_p] = ht_patterns.get(ht_p, 0) + 1
+
+    # =========================
+    # HELPERS
+    # =========================
+
+    def avg(a, b):
+        return round(a / b, 2) if b else 0
+
+    def rate(a, b):
+        return round((a / b) * 100, 1) if b else 0
+
+    def top5(d):
+        return dict(sorted(d.items(), key=lambda x: x[1], reverse=True)[:5])
+
+    # =========================
+    # RESPONSE
+    # =========================
 
     return {
         "team": team,
@@ -370,8 +462,10 @@ async def team_stats(
             "losses": losses,
             "scored_total": scored,
             "conceded_total": conceded,
-            "avg_scored": round(scored / played, 2),
-            "avg_conceded": round(conceded / played, 2)
+            "avg_scored": avg(scored, played),
+            "avg_conceded": avg(conceded, played),
+            "clean_sheet_rate": rate(clean_total, played),
+            "btts_rate": rate(btts_total, played)
         },
 
         "home": {
@@ -381,8 +475,10 @@ async def team_stats(
             "losses": home_losses,
             "scored_total": home_scored,
             "conceded_total": home_conceded,
-            "avg_scored": round(home_scored / home_played, 2) if home_played else 0,
-            "avg_conceded": round(home_conceded / home_played, 2) if home_played else 0
+            "avg_scored": avg(home_scored, home_played),
+            "avg_conceded": avg(home_conceded, home_played),
+            "clean_sheet_rate": rate(clean_home, home_played),
+            "btts_rate": rate(btts_home, home_played)
         },
 
         "away": {
@@ -392,7 +488,26 @@ async def team_stats(
             "losses": away_losses,
             "scored_total": away_scored,
             "conceded_total": away_conceded,
-            "avg_scored": round(away_scored / away_played, 2) if away_played else 0,
-            "avg_conceded": round(away_conceded / away_played, 2) if away_played else 0
-        }
+            "avg_scored": avg(away_scored, away_played),
+            "avg_conceded": avg(away_conceded, away_played),
+            "clean_sheet_rate": rate(clean_away, away_played),
+            "btts_rate": rate(btts_away, away_played)
+        },
+
+        "advanced": {
+            "scoring_distribution": {
+                "0_goal": score_dist["0"],
+                "1_goal": score_dist["1"],
+                "2_goal": score_dist["2"],
+                "3_plus_goal": score_dist["3_plus"]
             }
+        },
+
+        "score_patterns": {
+            "overall": top5(score_patterns["overall"]),
+            "home": top5(score_patterns["home"]),
+            "away": top5(score_patterns["away"])
+        },
+
+        "ht_patterns": top5(ht_patterns)
+                }
