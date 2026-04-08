@@ -6,7 +6,11 @@ from fastapi import FastAPI, Query, HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 
-app = FastAPI()
+app = FastAPI(
+    title="Football Data API",
+    description="Secure football data API with admin tools",
+    version="1.0.0"
+)
 
 # 🔐 SECURITY
 security = HTTPBearer()
@@ -41,7 +45,7 @@ async def shutdown():
     await pool.close()
 
 
-# 🔐 TOKEN KONTROL (SWAGGER UYUMLU)
+# 🔐 TOKEN KONTROL
 def check_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
     try:
         token = credentials.credentials
@@ -57,7 +61,7 @@ class LoginRequest(BaseModel):
 
 
 # 🔑 LOGIN
-@app.post("/login")
+@app.post("/login", tags=["Auth"])
 def login(data: LoginRequest):
 
     if data.username != ADMIN_USER or data.password != ADMIN_PASS:
@@ -75,7 +79,7 @@ def login(data: LoginRequest):
     return {"access_token": token}
 
 
-# 🌍 FORMAT HELPERS
+# 🌍 HELPERS
 def format_country(country):
     return country.replace("-", " ").title()
 
@@ -88,42 +92,19 @@ def format_percent(value):
     return f"{round(value * 100, 1)}%"
 
 
-# 🔥 LEAGUE ALIASES
-LEAGUE_ALIASES = {
-    "georgia": {
-        "erovnuli-liga": [
-            "umaglesi-liga",
-            "crystalbet-erovnuli-liga"
-        ],
-        "erovnuli-liga-2": [
-            "pirveli-liga",
-            "crystalbet-erovnuli-liga-2"
-        ]
-    },
-    "kenya": {
-        "fkf-cup": [
-            "shield-cup",
-            "fkf-mozzart-bet-cup"
-        ]
-    }
-}
-
-
-# 🧪 HEALTH (AÇIK)
-@app.get("/")
+# 🧪 HEALTH
+@app.get("/", tags=["System"])
 async def health():
     try:
         async with pool.acquire() as conn:
             await conn.fetch("SELECT 1")
-
         return {"status": "ok", "database": "connected"}
-
     except Exception as e:
         return {"status": "error", "detail": str(e)}
 
 
-# 📊 STATS (KORUMALI)
-@app.get("/stats")
+# 📊 STATS
+@app.get("/stats", tags=["Stats"])
 async def stats(credentials: HTTPAuthorizationCredentials = Depends(security)):
     check_token(credentials)
 
@@ -138,7 +119,6 @@ async def stats(credentials: HTTPAuthorizationCredentials = Depends(security)):
 
     total = row["total"]
     with_odds = row["with_odds"]
-
     coverage = (with_odds / total) if total > 0 else 0
 
     return {
@@ -149,8 +129,8 @@ async def stats(credentials: HTTPAuthorizationCredentials = Depends(security)):
     }
 
 
-# ⚽ MATCHES (KORUMALI)
-@app.get("/matches")
+# ⚽ MATCHES
+@app.get("/matches", tags=["Matches"])
 async def get_matches(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     country: str = None,
@@ -192,8 +172,8 @@ async def get_matches(
     ]
 
 
-# 📊 LEAGUE SUMMARY (KORUMALI)
-@app.get("/leagues/summary")
+# 🏆 LEAGUE SUMMARY
+@app.get("/leagues/summary", tags=["Leagues"])
 async def leagues_summary(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     country: str = None
@@ -229,3 +209,67 @@ async def leagues_summary(
             for row in rows
         ]
     }
+
+
+# =========================
+# 🛠 ADMIN ENDPOINTS
+# =========================
+
+# 📋 TABLES
+@app.get("/admin/tables", tags=["Admin"])
+async def get_tables(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    check_token(credentials)
+
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT table_name
+            FROM information_schema.tables
+            WHERE table_schema = 'public'
+        """)
+
+    return {"tables": [r["table_name"] for r in rows]}
+
+
+# 📊 INDEXES
+@app.get("/admin/indexes", tags=["Admin"])
+async def get_indexes(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    check_token(credentials)
+
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT indexname, indexdef
+            FROM pg_indexes
+            WHERE schemaname = 'public'
+        """)
+
+    return [
+        {
+            "name": r["indexname"],
+            "definition": r["indexdef"]
+        }
+        for r in rows
+    ]
+
+
+# 🧱 COLUMNS
+@app.get("/admin/columns", tags=["Admin"])
+async def get_columns(
+    table: str,
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    check_token(credentials)
+
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT column_name, data_type
+            FROM information_schema.columns
+            WHERE table_name = $1
+        """, table)
+
+    return [
+        {
+            "column": r["column_name"],
+            "type": r["data_type"]
+        }
+        for r in rows
+    ]
