@@ -1,10 +1,16 @@
 import os
 import asyncpg
-from fastapi import FastAPI, Query
+import jwt
+from datetime import datetime, timedelta
+from fastapi import FastAPI, Query, Request, HTTPException
 
 app = FastAPI()
 
 DATABASE_URL = os.getenv("DATABASE_URL")
+
+ADMIN_USER = os.getenv("ADMIN_USER")
+ADMIN_PASS = os.getenv("ADMIN_PASS")
+SECRET_KEY = os.getenv("SECRET_KEY")
 
 if not DATABASE_URL:
     raise ValueError("DATABASE_URL bulunamadı!")
@@ -30,6 +36,39 @@ async def shutdown():
     await pool.close()
 
 
+# 🔐 TOKEN KONTROL
+def check_token(request: Request):
+    auth = request.headers.get("Authorization")
+
+    if not auth:
+        raise HTTPException(status_code=401, detail="No token")
+
+    try:
+        token = auth.split(" ")[1]
+        jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+    except:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+
+# 🔑 LOGIN
+@app.post("/login")
+def login(username: str, password: str):
+
+    if username != ADMIN_USER or password != ADMIN_PASS:
+        raise HTTPException(status_code=401, detail="Wrong credentials")
+
+    token = jwt.encode(
+        {
+            "user": username,
+            "exp": datetime.utcnow() + timedelta(hours=12)
+        },
+        SECRET_KEY,
+        algorithm="HS256"
+    )
+
+    return {"access_token": token}
+
+
 # 🌍 FORMAT HELPERS
 def format_country(country):
     return country.replace("-", " ").title()
@@ -42,9 +81,9 @@ def format_league(country, league):
 def format_percent(value):
     return f"{round(value * 100, 1)}%"
 
+
 # 🔥 LEAGUE ALIASES
 LEAGUE_ALIASES = {
-
     "georgia": {
         "erovnuli-liga": [
             "umaglesi-liga",
@@ -55,14 +94,12 @@ LEAGUE_ALIASES = {
             "crystalbet-erovnuli-liga-2"
         ]
     },
-
     "kenya": {
         "fkf-cup": [
             "shield-cup",
             "fkf-mozzart-bet-cup"
         ]
     }
-
 }
 
 
@@ -83,7 +120,7 @@ def resolve_league(country: str, league: str):
     return league
 
 
-# 🧪 HEALTH
+# 🧪 HEALTH (AÇIK BIRAK)
 @app.get("/")
 async def health():
     try:
@@ -102,115 +139,109 @@ async def health():
         }
 
 
-# 📊 GLOBAL STATS
+# 📊 GLOBAL STATS (KORUMALI)
 @app.get("/stats")
-async def stats():
-    try:
-        async with pool.acquire() as conn:
+async def stats(request: Request):
+    check_token(request)
 
-            row = await conn.fetchrow("""
-                SELECT 
-                    COUNT(*) as total,
-                    COUNT(*) FILTER (WHERE has_odds = true) as with_odds,
-                    COUNT(*) FILTER (WHERE has_odds = false) as no_odds
-                FROM matches
-            """)
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT 
+                COUNT(*) as total,
+                COUNT(*) FILTER (WHERE has_odds = true) as with_odds,
+                COUNT(*) FILTER (WHERE has_odds = false) as no_odds
+            FROM matches
+        """)
 
-        total = row["total"]
-        with_odds = row["with_odds"]
-        no_odds = row["no_odds"]
+    total = row["total"]
+    with_odds = row["with_odds"]
+    no_odds = row["no_odds"]
 
-        coverage = (with_odds / total) if total > 0 else 0
+    coverage = (with_odds / total) if total > 0 else 0
 
-        return {
-            "total_matches": total,
-            "with_odds": with_odds,
-            "no_odds": no_odds,
-            "odds_coverage": format_percent(coverage)
-        }
-
-    except Exception as e:
-        return {"error": str(e)}
+    return {
+        "total_matches": total,
+        "with_odds": with_odds,
+        "no_odds": no_odds,
+        "odds_coverage": format_percent(coverage)
+    }
 
 
-# ⚽ MATCHES
+# ⚽ MATCHES (KORUMALI)
 @app.get("/matches")
 async def get_matches(
+    request: Request,
     country: str = None,
     limit: int = Query(50, le=200),
     offset: int = 0
 ):
-    try:
-        async with pool.acquire() as conn:
+    check_token(request)
 
-            if country:
-                rows = await conn.fetch("""
-                    SELECT country, league, home_team, away_team,
-                           ht_home, ht_away, ft_home, ft_away, has_odds
-                    FROM matches
-                    WHERE country = $1
-                    ORDER BY match_id DESC
-                    LIMIT $2 OFFSET $3
-                """, country.lower(), limit, offset)
-            else:
-                rows = await conn.fetch("""
-                    SELECT country, league, home_team, away_team,
-                           ht_home, ht_away, ft_home, ft_away, has_odds
-                    FROM matches
-                    ORDER BY match_id DESC
-                    LIMIT $1 OFFSET $2
-                """, limit, offset)
+    async with pool.acquire() as conn:
 
-        return [
-            {
-                "country": format_country(r["country"]),
-                "league": format_league(r["country"], r["league"]),
-                "match": f"{r['home_team']} vs {r['away_team']}",
-                "ht_score": f"{r['ht_home']}-{r['ht_away']}" if r["ht_home"] is not None else None,
-                "ft_score": f"{r['ft_home']}-{r['ft_away']}" if r["ft_home"] is not None else None,
-                "has_odds": r["has_odds"]
-            }
-            for r in rows
-        ]
-
-    except Exception as e:
-        return {"error": str(e)}
-
-
-# 📊 LEAGUE SUMMARY
-@app.get("/leagues/summary")
-async def leagues_summary(country: str):
-    try:
-        async with pool.acquire() as conn:
-
+        if country:
             rows = await conn.fetch("""
-                SELECT 
-                    league,
-                    COUNT(*) as total_matches,
-                    COUNT(*) FILTER (WHERE has_odds = true) as with_odds,
-                    COUNT(*) FILTER (WHERE has_odds = false) as no_odds
+                SELECT country, league, home_team, away_team,
+                       ht_home, ht_away, ft_home, ft_away, has_odds
                 FROM matches
                 WHERE country = $1
-                GROUP BY league
-                ORDER BY total_matches DESC
-            """, country.lower())
+                ORDER BY match_id DESC
+                LIMIT $2 OFFSET $3
+            """, country.lower(), limit, offset)
+        else:
+            rows = await conn.fetch("""
+                SELECT country, league, home_team, away_team,
+                       ht_home, ht_away, ft_home, ft_away, has_odds
+                FROM matches
+                ORDER BY match_id DESC
+                LIMIT $1 OFFSET $2
+            """, limit, offset)
 
-        return {
-            "country": format_country(country),
-            "leagues": [
-                {
-                    "league": row["league"].replace("-", " ").title(),
-                    "total_matches": row["total_matches"],
-                    "with_odds": row["with_odds"],
-                    "no_odds": row["no_odds"],
-                    "coverage": format_percent(
-                        (row["with_odds"] / row["total_matches"])
-                        if row["total_matches"] > 0 else 0
-                    )
-                }
-                for row in rows
-            ]
+    return [
+        {
+            "country": format_country(r["country"]),
+            "league": format_league(r["country"], r["league"]),
+            "match": f"{r['home_team']} vs {r['away_team']}",
+            "ht_score": f"{r['ht_home']}-{r['ht_away']}" if r["ht_home"] is not None else None,
+            "ft_score": f"{r['ft_home']}-{r['ft_away']}" if r["ft_home"] is not None else None,
+            "has_odds": r["has_odds"]
+        }
+        for r in rows
+    ]
+
+# 📊 LEAGUE SUMMARY (KORUMALI)
+@app.get("/leagues/summary")
+async def leagues_summary(request: Request, country: str):
+    check_token(request)
+
+    async with pool.acquire() as conn:
+
+        rows = await conn.fetch("""
+            SELECT 
+                league,
+                COUNT(*) as total_matches,
+                COUNT(*) FILTER (WHERE has_odds = true) as with_odds,
+                COUNT(*) FILTER (WHERE has_odds = false) as no_odds
+            FROM matches
+            WHERE country = $1
+            GROUP BY league
+            ORDER BY total_matches DESC
+        """, country.lower())
+
+    return {
+        "country": format_country(country),
+        "leagues": [
+            {
+                "league": row["league"].replace("-", " ").title(),
+                "total_matches": row["total_matches"],
+                "with_odds": row["with_odds"],
+                "no_odds": row["no_odds"],
+                "coverage": format_percent(
+                    (row["with_odds"] / row["total_matches"])
+                    if row["total_matches"] > 0 else 0
+                )
+            }
+            for row in rows
+        ]
         }
 
-    except Exception as e:
-        return {"error": str(e)}
