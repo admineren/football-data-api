@@ -543,3 +543,158 @@ async def team_stats(
             "away": top5_simple(ht_ft_patterns["away"])
         }
     }
+
+@app.get("/league/stats", tags=["Analysis"])
+async def league_stats(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    country: str = None,
+    league: str = None
+):
+    check_token(credentials)
+
+    if not country or not league:
+        raise HTTPException(status_code=400, detail="country and league required")
+
+    async with pool.acquire() as conn:
+
+        # =========================
+        # CORE DATA
+        # =========================
+        core = await conn.fetchrow("""
+            SELECT
+                COUNT(*) as total,
+
+                COUNT(*) FILTER (WHERE ft_home > ft_away) as home_wins,
+                COUNT(*) FILTER (WHERE ft_home = ft_away) as draws,
+                COUNT(*) FILTER (WHERE ft_home < ft_away) as away_wins,
+
+                SUM(ft_home + ft_away) as total_goals,
+
+                COUNT(*) FILTER (
+                    WHERE ft_home > 0 AND ft_away > 0
+                ) as btts,
+
+                COUNT(*) FILTER (
+                    WHERE ft_home = 0 OR ft_away = 0
+                ) as clean_sheets,
+
+                COUNT(*) FILTER (
+                    WHERE ABS(ft_home - ft_away) = 1
+                ) as one_goal,
+
+                COUNT(*) FILTER (
+                    WHERE ABS(ft_home - ft_away) >= 3
+                ) as high_margin
+
+            FROM matches
+            WHERE country = $1 AND league = $2
+        """, country.lower(), league.lower())
+
+        # =========================
+        # ODDS DATA
+        # =========================
+        odds = await conn.fetchrow("""
+            SELECT
+                COUNT(*) as total,
+
+                COUNT(*) FILTER (
+                    WHERE (
+                        (home_odds < away_odds AND ft_home > ft_away) OR
+                        (away_odds < home_odds AND ft_away > ft_home)
+                    )
+                ) as favorite_wins,
+
+                COUNT(*) FILTER (
+                    WHERE (
+                        (home_odds < away_odds AND ft_home < ft_away) OR
+                        (away_odds < home_odds AND ft_away < ft_home)
+                    )
+                ) as underdog_wins
+
+            FROM matches
+            WHERE country = $1
+              AND league = $2
+              AND has_odds = true
+              AND home_odds IS NOT NULL
+              AND away_odds IS NOT NULL
+        """, country.lower(), league.lower())
+
+        # =========================
+        # HELPERS
+        # =========================
+        def rate(a, b):
+            return (a / b) if b else 0
+
+        def percent(v):
+            return f"{round(v * 100, 1)}%"
+
+        # =========================
+        # CALCULATIONS
+        # =========================
+        total = core["total"]
+
+        home_wins = core["home_wins"]
+        draws = core["draws"]
+        away_wins = core["away_wins"]
+
+        avg_goals = (core["total_goals"] / total) if total else 0
+
+        # advantage
+        home_rate = rate(home_wins, total)
+        away_rate = rate(away_wins, total)
+        advantage = home_rate - away_rate
+
+        # competitiveness
+        draw_rate = rate(draws, total)
+        one_goal_rate = rate(core["one_goal"], total)
+        high_margin_rate = rate(core["high_margin"], total)
+
+        # scoring
+        btts_rate = rate(core["btts"], total)
+        clean_sheet_rate = rate(core["clean_sheets"], total)
+
+        # odds
+        odds_total = odds["total"]
+
+        favorite_rate = rate(odds["favorite_wins"], odds_total)
+        underdog_rate = rate(odds["underdog_wins"], odds_total)
+
+        # =========================
+        # RESPONSE
+        # =========================
+        return {
+            "league": format_league(country, league),
+
+            "structure": {
+                "matches": total,
+                "results": {
+                    "home_wins": home_wins,
+                    "draws": draws,
+                    "away_wins": away_wins,
+
+                    "home_win_rate": percent(home_rate),
+                    "draw_rate": percent(draw_rate),
+                    "away_win_rate": percent(away_rate)
+                },
+                "home_advantage": {
+                    "advantage": percent(advantage)
+                }
+            },
+
+            "scoring": {
+                "avg_goals": round(avg_goals, 2),
+                "clean_sheet_rate": percent(clean_sheet_rate),
+                "btts_rate": percent(btts_rate)
+            },
+
+            "competitiveness": {
+                "draw_rate": percent(draw_rate),
+                "one_goal_margin_rate": percent(one_goal_rate),
+                "high_margin_rate": percent(high_margin_rate)
+            },
+
+            "predictability": {
+                "favorite_win_rate": percent(favorite_rate),
+                "underdog_win_rate": percent(underdog_rate)
+            }
+        }
