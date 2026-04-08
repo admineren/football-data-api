@@ -273,3 +273,126 @@ async def get_columns(
         }
         for r in rows
     ]
+
+@app.get("/team/stats", tags=["Analysis"])
+async def team_stats(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    country: str = None,
+    team: str = None
+):
+    check_token(credentials)
+
+    if not country or not team:
+        raise HTTPException(status_code=400, detail="country and team required")
+
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT 
+                home_team, away_team,
+                ft_home, ft_away
+            FROM matches
+            WHERE country = $1
+            AND (home_team = $2 OR away_team = $2)
+        """, country.lower(), team)
+
+    if not rows:
+        return {"error": "No data"}
+
+    # 🔢 GENEL
+    played = len(rows)
+    wins = draws = losses = 0
+    scored = conceded = 0
+
+    # 🏠 HOME
+    home_played = home_wins = home_draws = home_losses = 0
+    home_scored = home_conceded = 0
+
+    # ✈️ AWAY
+    away_played = away_wins = away_draws = away_losses = 0
+    away_scored = away_conceded = 0
+
+    for r in rows:
+
+        # 🏠 HOME
+        if r["home_team"] == team:
+            home_played += 1
+            home_scored += r["ft_home"]
+            home_conceded += r["ft_away"]
+
+            if r["ft_home"] > r["ft_away"]:
+                home_wins += 1
+            elif r["ft_home"] < r["ft_away"]:
+                home_losses += 1
+            else:
+                home_draws += 1
+
+            scored += r["ft_home"]
+            conceded += r["ft_away"]
+
+            if r["ft_home"] > r["ft_away"]:
+                wins += 1
+            elif r["ft_home"] < r["ft_away"]:
+                losses += 1
+            else:
+                draws += 1
+
+        # ✈️ AWAY
+        else:
+            away_played += 1
+            away_scored += r["ft_away"]
+            away_conceded += r["ft_home"]
+
+            if r["ft_away"] > r["ft_home"]:
+                away_wins += 1
+            elif r["ft_away"] < r["ft_home"]:
+                away_losses += 1
+            else:
+                away_draws += 1
+
+            scored += r["ft_away"]
+            conceded += r["ft_home"]
+
+            if r["ft_away"] > r["ft_home"]:
+                wins += 1
+            elif r["ft_away"] < r["ft_home"]:
+                losses += 1
+            else:
+                draws += 1
+
+    return {
+        "team": team,
+        "country": country,
+
+        "overall": {
+            "played": played,
+            "wins": wins,
+            "draws": draws,
+            "losses": losses,
+            "scored_total": scored,
+            "conceded_total": conceded,
+            "avg_scored": round(scored / played, 2),
+            "avg_conceded": round(conceded / played, 2)
+        },
+
+        "home": {
+            "played": home_played,
+            "wins": home_wins,
+            "draws": home_draws,
+            "losses": home_losses,
+            "scored_total": home_scored,
+            "conceded_total": home_conceded,
+            "avg_scored": round(home_scored / home_played, 2) if home_played else 0,
+            "avg_conceded": round(home_conceded / home_played, 2) if home_played else 0
+        },
+
+        "away": {
+            "played": away_played,
+            "wins": away_wins,
+            "draws": away_draws,
+            "losses": away_losses,
+            "scored_total": away_scored,
+            "conceded_total": away_conceded,
+            "avg_scored": round(away_scored / away_played, 2) if away_played else 0,
+            "avg_conceded": round(away_conceded / away_played, 2) if away_played else 0
+        }
+            }
