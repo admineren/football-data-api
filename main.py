@@ -544,7 +544,7 @@ async def team_stats(
         }
     }
 
-@app.get("/league/stats", tags=["Analysis"])
+app.get("/league/stats", tags=["Analysis"])
 async def league_stats(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     country: str = None,
@@ -558,7 +558,7 @@ async def league_stats(
     async with pool.acquire() as conn:
 
         # =========================
-        # CORE + GOALS
+        # CORE + GOAL DISTRIBUTIONS
         # =========================
         core = await conn.fetchrow("""
             SELECT
@@ -573,21 +573,54 @@ async def league_stats(
                 COUNT(*) FILTER (WHERE ft_home > 0 AND ft_away > 0) as btts,
                 COUNT(*) FILTER (WHERE ft_home = 0 OR ft_away = 0) as clean_sheets,
 
-                -- HOME GOAL DIST
-                COUNT(*) FILTER (WHERE ft_home <= 1) as home_0_1,
+                -- FT TOTAL GOALS
+                COUNT(*) FILTER (WHERE (ft_home + ft_away) BETWEEN 0 AND 1) as ft_0_1,
+                COUNT(*) FILTER (WHERE (ft_home + ft_away) BETWEEN 2 AND 3) as ft_2_3,
+                COUNT(*) FILTER (WHERE (ft_home + ft_away) BETWEEN 4 AND 5) as ft_4_5,
+                COUNT(*) FILTER (WHERE (ft_home + ft_away) >= 6) as ft_6_plus,
+
+                -- HT TOTAL GOALS
+                COUNT(*) FILTER (
+                    WHERE ht_home IS NOT NULL
+                      AND ht_away IS NOT NULL
+                      AND (ht_home + ht_away) BETWEEN 0 AND 1
+                ) as ht_0_1,
+
+                COUNT(*) FILTER (
+                    WHERE ht_home IS NOT NULL
+                      AND ht_away IS NOT NULL
+                      AND (ht_home + ht_away) BETWEEN 2 AND 3
+                ) as ht_2_3,
+
+                COUNT(*) FILTER (
+                    WHERE ht_home IS NOT NULL
+                      AND ht_away IS NOT NULL
+                      AND (ht_home + ht_away) BETWEEN 4 AND 5
+                ) as ht_4_5,
+
+                COUNT(*) FILTER (
+                    WHERE ht_home IS NOT NULL
+                      AND ht_away IS NOT NULL
+                      AND (ht_home + ht_away) >= 6
+                ) as ht_6_plus,
+
+                -- HOME TEAM GOALS
+                COUNT(*) FILTER (WHERE ft_home BETWEEN 0 AND 1) as home_0_1,
                 COUNT(*) FILTER (WHERE ft_home BETWEEN 2 AND 3) as home_2_3,
                 COUNT(*) FILTER (WHERE ft_home BETWEEN 4 AND 5) as home_4_5,
                 COUNT(*) FILTER (WHERE ft_home >= 6) as home_6_plus,
 
-                -- AWAY GOAL DIST
-                COUNT(*) FILTER (WHERE ft_away <= 1) as away_0_1,
+                -- AWAY TEAM GOALS
+                COUNT(*) FILTER (WHERE ft_away BETWEEN 0 AND 1) as away_0_1,
                 COUNT(*) FILTER (WHERE ft_away BETWEEN 2 AND 3) as away_2_3,
                 COUNT(*) FILTER (WHERE ft_away BETWEEN 4 AND 5) as away_4_5,
                 COUNT(*) FILTER (WHERE ft_away >= 6) as away_6_plus
 
             FROM matches
-            WHERE country = $1 AND league = $2
-              AND ft_home IS NOT NULL AND ft_away IS NOT NULL
+            WHERE country = $1
+              AND league = $2
+              AND ft_home IS NOT NULL
+              AND ft_away IS NOT NULL
         """, country.lower(), league.lower())
 
         # =========================
@@ -617,13 +650,19 @@ async def league_stats(
               AND has_odds = true
               AND home_odds IS NOT NULL
               AND away_odds IS NOT NULL
+              AND ft_home IS NOT NULL
+              AND ft_away IS NOT NULL
         """, country.lower(), league.lower())
 
         # =========================
-        # HT/FT (ONLY VALID HT)
+        # HT/FT VALID MATCHES ONLY
         # =========================
         ht_rows = await conn.fetch("""
-            SELECT ht_home, ht_away, ft_home, ft_away
+            SELECT
+                ht_home,
+                ht_away,
+                ft_home,
+                ft_away
             FROM matches
             WHERE country = $1
               AND league = $2
@@ -642,102 +681,97 @@ async def league_stats(
         def percent(v):
             return f"{round(v * 100, 1)}%"
 
-        def res(h, a):
-            if h > a: return "1"
-            if h < a: return "2"
+        def result_code(home, away):
+            if home > away:
+                return "1"
+            elif home < away:
+                return "2"
             return "0"
 
         # =========================
-        # BASE
+        # BASE VALUES
         # =========================
-        total = core["total"]
-
-        home_wins = core["home_wins"]
-        draws = core["draws"]
-        away_wins = core["away_wins"]
-
+        total = core["total"] or 0
         total_goals = core["total_goals"] or 0
 
-        # =========================
-        # BASIC CALC
-        # =========================
+        home_wins = core["home_wins"] or 0
+        draws = core["draws"] or 0
+        away_wins = core["away_wins"] or 0
+
         home_rate = rate(home_wins, total)
         draw_rate = rate(draws, total)
         away_rate = rate(away_wins, total)
 
-        advantage = home_rate - away_rate
+        avg_goals = round(total_goals / total, 2) if total else 0
+        home_advantage = round((home_rate - away_rate) * 100, 1)
 
-        avg_goals = total_goals / total if total else 0
-
-        btts_rate = rate(core["btts"], total)
         clean_rate = rate(core["clean_sheets"], total)
+        btts_rate = rate(core["btts"], total)
 
         # =========================
-        # GOAL DIST (COUNT)
+        # FT / HT GOAL DISTRIBUTION
         # =========================
-        home_dist = {
-            "0_1": core["home_0_1"],
-            "2_3": core["home_2_3"],
-            "4_5": core["home_4_5"],
-            "6_plus": core["home_6_plus"]
+        ft_goal_distribution = {
+            "0_1": core["ft_0_1"] or 0,
+            "2_3": core["ft_2_3"] or 0,
+            "4_5": core["ft_4_5"] or 0,
+            "6_plus": core["ft_6_plus"] or 0
         }
 
-        away_dist = {
-            "0_1": core["away_0_1"],
-            "2_3": core["away_2_3"],
-            "4_5": core["away_4_5"],
-            "6_plus": core["away_6_plus"]
+        ht_goal_distribution = {
+            "0_1": core["ht_0_1"] or 0,
+            "2_3": core["ht_2_3"] or 0,
+            "4_5": core["ht_4_5"] or 0,
+            "6_plus": core["ht_6_plus"] or 0
+        }
+
+        home_goal_distribution = {
+            "0_1": core["home_0_1"] or 0,
+            "2_3": core["home_2_3"] or 0,
+            "4_5": core["home_4_5"] or 0,
+            "6_plus": core["home_6_plus"] or 0
+        }
+
+        away_goal_distribution = {
+            "0_1": core["away_0_1"] or 0,
+            "2_3": core["away_2_3"] or 0,
+            "4_5": core["away_4_5"] or 0,
+            "6_plus": core["away_6_plus"] or 0
         }
 
         # =========================
-        # HT/FT
+        # HT/FT DISTRIBUTION
         # =========================
-        htft_home = {}
-        htft_away = {}
+        htft_distribution = {}
 
-        comeback = 0
-        collapse = 0
-        lead_win = 0
+        for row in ht_rows:
+            ht_result = result_code(row["ht_home"], row["ht_away"])
+            ft_result = result_code(row["ft_home"], row["ft_away"])
 
-        for r in ht_rows:
+            key = f"{ht_result}/{ft_result}"
+            htft_distribution[key] = htft_distribution.get(key, 0) + 1
 
-            ht_h, ht_a = r["ht_home"], r["ht_away"]
-            ft_h, ft_a = r["ft_home"], r["ft_away"]
-
-            ht_res = res(ht_h, ht_a)
-            ft_res = res(ft_h, ft_a)
-
-            key = f"{ht_res}/{ft_res}"
-
-            # home perspective
-            htft_home[key] = htft_home.get(key, 0) + 1
-
-            # away perspective (reverse)
-            ht_res_away = res(ht_a, ht_h)
-            ft_res_away = res(ft_a, ft_h)
-            key_away = f"{ht_res_away}/{ft_res_away}"
-
-            htft_away[key_away] = htft_away.get(key_away, 0) + 1
-
-            # =====================
-            # GAME FLOW SUMMARY
-            # =====================
-            if ht_res == "1" and ft_res == "1":
-                lead_win += 1
-
-            if ht_res == "2" and ft_res == "1":
-                comeback += 1
-
-            if ht_res == "1" and ft_res == "2":
-                collapse += 1
+        # büyükten küçüğe sırala
+        htft_distribution = dict(
+            sorted(
+                htft_distribution.items(),
+                key=lambda x: x[1],
+                reverse=True
+            )
+        )
 
         # =========================
         # ODDS CALC
         # =========================
-        odds_total = odds["total"]
+        odds_total = odds["total"] or 0
 
-        favorite_rate = percent(rate(odds["favorite_wins"], odds_total))
-        underdog_rate = percent(rate(odds["underdog_wins"], odds_total))
+        favorite_win_rate = percent(
+            rate(odds["favorite_wins"] or 0, odds_total)
+        )
+
+        underdog_win_rate = percent(
+            rate(odds["underdog_wins"] or 0, odds_total)
+        )
 
         # =========================
         # RESPONSE
@@ -751,41 +785,35 @@ async def league_stats(
                     "home_wins": home_wins,
                     "draws": draws,
                     "away_wins": away_wins,
-
                     "home_win_rate": percent(home_rate),
                     "draw_rate": percent(draw_rate),
                     "away_win_rate": percent(away_rate)
                 },
                 "home_advantage": {
-                    "advantage": percent(advantage)
+                    "advantage": f"{home_advantage}%"
                 }
             },
 
             "scoring": {
-                "avg_goals": round(avg_goals, 2),
+                "avg_goals": avg_goals,
                 "clean_sheet_rate": percent(clean_rate),
                 "btts_rate": percent(btts_rate),
 
-                "goal_distribution": {
-                    "home": home_dist,
-                    "away": away_dist
+                "ft_goal_distribution": ft_goal_distribution,
+                "ht_goal_distribution": ht_goal_distribution,
+
+                "team_goal_distribution": {
+                    "home": home_goal_distribution,
+                    "away": away_goal_distribution
                 }
             },
 
             "predictability": {
-                "favorite_win_rate": favorite_rate,
-                "underdog_win_rate": underdog_rate
+                "favorite_win_rate": favorite_win_rate,
+                "underdog_win_rate": underdog_win_rate
             },
 
             "game_flow": {
-                "ht_ft_distribution": {
-                    "home": htft_home,
-                    "away": htft_away
-                },
-                "summary": {
-                    "lead_win_matches": lead_win,
-                    "comeback_matches": comeback,
-                    "collapse_matches": collapse
-                }
+                "ht_ft_distribution": htft_distribution
             }
         }
