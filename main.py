@@ -544,7 +544,7 @@ async def team_stats(
         }
     }
 
-app.get("/league/stats", tags=["Analysis"])
+@app.get("/league/stats", tags=["Analysis"])
 async def league_stats(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     country: str = None,
