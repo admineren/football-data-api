@@ -1,3 +1,4 @@
+import requests
 import os
 import jwt
 import asyncpg
@@ -42,6 +43,9 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 ADMIN_USER = os.getenv("ADMIN_USER")
 ADMIN_PASS_HASH = os.getenv("ADMIN_PASS_HASH")
 SECRET_KEY = os.getenv("SECRET_KEY")
+SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
+EMAIL_FROM = os.getenv("EMAIL_FROM")
+EMAIL_TO = os.getenv("EMAIL_TO")
 
 if not DATABASE_URL or not ADMIN_USER or not ADMIN_PASS_HASH or not SECRET_KEY:
     raise Exception("ENV eksik!")
@@ -102,6 +106,34 @@ def require_admin(user=Depends(get_current_user)):
         raise HTTPException(403, "Admin only")
     return user
 
+# VERIFY EMAIL
+def send_email(subject, content):
+    url = "https://api.sendgrid.com/v3/mail/send"
+
+    headers = {
+        "Authorization": f"Bearer {os.getenv('SENDGRID_API_KEY')}",
+        "Content-Type": "application/json"
+    }
+
+    data = {
+        "personalizations": [
+            {
+                "to": [{"email": os.getenv("EMAIL_TO")}]
+            }
+        ],
+        "from": {"email": os.getenv("EMAIL_FROM")},
+        "subject": subject,
+        "content": [
+            {
+                "type": "text/plain",
+                "value": content
+            }
+        ]
+    }
+
+    response = requests.post(url, headers=headers, json=data)
+    return response.status_code, response.text
+
 # =========================
 # 🔑 LOGIN
 # =========================
@@ -146,6 +178,11 @@ def format_percent(value):
 @app.get("/")
 async def health():
     return {"status": "ok"}
+
+@app.get("/test-email")
+def test_email():
+    status, text = send_email("TEST", "Mail sistemi çalışıyor 🚀")
+    return {"status": status, "response": text}
 
 # =============================
 # 📊 STATS
