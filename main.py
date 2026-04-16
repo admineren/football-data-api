@@ -101,7 +101,7 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
     except:
         raise HTTPException(401, "Invalid token")
 
-def require_admin(
+async def require_admin(
     request: Request,
     user=Depends(get_current_user)
 ):
@@ -110,26 +110,22 @@ def require_admin(
 
     info = get_request_info(request)
 
-    async def _log_and_check():
-        async with pool.acquire() as conn:
+    async with pool.acquire() as conn:
 
-            # yeni IP mi?
-            new_ip = await is_new_ip(conn, info["ip"], user["user"])
+        # yeni IP mi?
+        new_ip = await is_new_ip(conn, info["ip"], user["user"])
 
-            # logla
-            await log_event(conn, "admin_access", info, user["user"])
+        # logla
+        await log_event(conn, "admin_access", info, user["user"])
 
-            # yeni IP ise mail at
-            if new_ip:
-                send_admin_alert(
-                    user["user"],
-                    info["ip"],
-                    info["device"],
-                    info["user_agent"]
-                )
-
-    import asyncio
-    asyncio.create_task(_log_and_check())
+        # yeni IP ise mail
+        if new_ip:
+            send_admin_alert(
+                user["user"],
+                info["ip"],
+                info["device"],
+                info["user_agent"]
+            )
 
     return user
 
