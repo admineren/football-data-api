@@ -101,12 +101,77 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
     except:
         raise HTTPException(401, "Invalid token")
 
-def require_admin(user=Depends(get_current_user)):
+def require_admin(
+    request: Request,
+    user=Depends(get_current_user)
+):
     if user.get("role") != "admin":
-        raise HTTPException(403, "Admin only")
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    info = get_request_info(request)
+
+    async def _log_and_check():
+        async with pool.acquire() as conn:
+
+            # yeni IP mi?
+            new_ip = await is_new_ip(conn, info["ip"], user["user"])
+
+            # logla
+            await log_event(conn, "admin_access", info, user["user"])
+
+            # yeni IP ise mail at
+            if new_ip:
+                send_admin_alert(
+                    user["user"],
+                    info["ip"],
+                    info["device"],
+                    info["user_agent"]
+                )
+
+    import asyncio
+    asyncio.create_task(_log_and_check())
+
     return user
 
-# VERIFY EMAIL
+# ============================
+# ✉️ MAIL NOTIFICATIONS
+# ============================
+
+def get_request_info(request: Request):
+    ip = request.client.host
+    user_agent = request.headers.get("user-agent", "unknown")
+
+    return {
+        "ip": ip,
+        "user_agent": user_agent,
+        "device": detect_device(user_agent)
+    }
+
+
+def detect_device(user_agent: str):
+    ua = user_agent.lower()
+
+    if "mozilla" in ua:
+        return "browser"
+    elif "android" in ua or "iphone" in ua:
+        return "mobile"
+    elif "postman" in ua or "curl" in ua or "python" in ua:
+        return "bot"
+    else:
+        return "unknown"
+async def log_event(conn, event_type, info, user=None, detail=None):
+    await conn.execute("""
+        INSERT INTO logs (event_type, ip, user_agent, device, user_name, detail, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, NOW())
+    """,
+        event_type,
+        info["ip"],
+        info["user_agent"],
+        info["device"],
+        user,
+        detail
+                      )
+
 def send_email(subject, content):
     url = "https://api.sendgrid.com/v3/mail/send"
 
@@ -117,23 +182,54 @@ def send_email(subject, content):
 
     data = {
         "personalizations": [
-            {
-                "to": [{"email": os.getenv("EMAIL_TO")}]
-            }
+            {"to": [{"email": os.getenv("EMAIL_TO")}]}
         ],
         "from": {"email": os.getenv("EMAIL_FROM")},
         "subject": subject,
         "content": [
-            {
-                "type": "text/plain",
-                "value": content
-            }
+            {"type": "text/plain", "value": content}
         ]
     }
 
-    response = requests.post(url, headers=headers, json=data)
-    return response.status_code, response.text
+    requests.post(url, headers=headers, json=data)
 
+async def check_bruteforce(conn, ip):
+    row = await conn.fetchrow("""
+        SELECT COUNT(*) as count
+        FROM logs
+        WHERE ip = $1
+        AND event_type = 'login_failed'
+        AND created_at > NOW() - INTERVAL '1 minute'
+    """, ip)
+
+    return row["count"] >= 5
+
+def send_admin_alert(user, ip, device, user_agent):
+    send_email(
+        "🚨 Yeni Admin Girişi Tespit Edildi",
+        f"""
+Admin hesabı yeni bir cihaz/IP ile kullanıldı
+
+User: {user}
+IP: {ip}
+Device: {device}
+User-Agent: {user_agent}
+
+Eğer bu siz değilseniz hemen kontrol edin!
+"""
+    )
+
+async def is_new_ip(conn, ip, user):
+    row = await conn.fetchrow("""
+        SELECT 1 FROM logs
+        WHERE user_name = $1
+        AND event_type = 'admin_access'
+        AND ip = $2
+        LIMIT 1
+    """, user, ip)
+
+    return row is None
+    
 # =========================
 # 🔑 LOGIN
 # =========================
@@ -142,22 +238,36 @@ class LoginRequest(BaseModel):
     password: str
 
 @app.post("/login")
-@limiter.limit("5/minute")
-def login(request: Request, data: LoginRequest):
+async def login(data: LoginRequest, request: Request):
 
-    ip = get_remote_address(request)
+    info = get_request_info(request)
 
-    if data.username != ADMIN_USER:
-        log_event("failed_login", data.username, ip)
-        raise HTTPException(401, "Wrong username")
+    async with pool.acquire() as conn:
 
-    if not verify_password(data.password, ADMIN_PASS_HASH):
-        log_event("failed_login", data.username, ip)
-        raise HTTPException(401, "Wrong password")
+        # username yanlış
+        if data.username != ADMIN_USER:
+            await log_event(conn, "login_failed", info, data.username, "wrong username")
+            raise HTTPException(status_code=401, detail="Wrong credentials")
+
+        # password yanlış
+        if not verify_password(data.password, ADMIN_PASS_HASH):
+            await log_event(conn, "login_failed", info, data.username, "wrong password")
+
+            # brute force kontrol
+            if await check_bruteforce(conn, info["ip"]):
+                await log_event(conn, "brute_force", info, data.username)
+
+                send_email(
+                    "🚨 Brute Force Detected",
+                    f"IP: {info['ip']}\nDevice: {info['device']}"
+                )
+
+            raise HTTPException(status_code=401, detail="Wrong credentials")
+
+        # başarılı login
+        await log_event(conn, "login_success", info, data.username)
 
     token = create_token(data.username, "admin")
-    log_event("successful_login", data.username, ip)
-
     return {"access_token": token}
 
 # =========================
@@ -296,8 +406,17 @@ async def get_tables(user=Depends(require_admin)):
     return {"tables": [r["table_name"] for r in rows]}
 
 @app.get("/admin/logs")
-def get_logs(user=Depends(require_admin)):
-    return {"logs": audit_logs[-50:]}
+async def get_logs(user=Depends(require_admin)):
+
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT event_type, ip, user_agent, device, user_name, detail, created_at
+            FROM logs
+            ORDER BY created_at DESC
+            LIMIT 100
+        """)
+
+    return [dict(r) for r in rows]
 
 @app.get("/admin/indexes")
 async def get_indexes(user=Depends(require_admin)):
