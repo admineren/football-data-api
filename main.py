@@ -147,12 +147,14 @@ def format_percent(value):
 async def health():
     return {"status": "ok"}
 
-# =========================
+# =============================
 # 📊 STATS
-# =========================
+# =============================
+
 @app.get("/stats", tags=["Stats"])
-async def stats 
-user=Depends(get_current_user),
+async def stats(
+    user=Depends(get_current_user),
+):
 
     async with pool.acquire() as conn:
         row = await conn.fetchrow("""
