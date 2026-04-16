@@ -1,8 +1,10 @@
 fastapi
 uvicorn
-psycopg2-binary
 aiohttp
 beautifulsoup4
 lxml
 asyncpg
 PyJWT
+passlib[bcrypt]
+slowapi
+python-dotenv
