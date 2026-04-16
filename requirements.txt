@@ -6,5 +6,6 @@ lxml
 asyncpg
 PyJWT
 passlib[bcrypt]
+bcrypt
 slowapi
 python-dotenv
