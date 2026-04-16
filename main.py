@@ -1,209 +1,101 @@
 import os
-import asyncpg
 import jwt
 from datetime import datetime, timedelta
-from fastapi import FastAPI, HTTPException, Depends, Request
+
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
+
 from passlib.context import CryptContext
 
-# RATE LIMIT
-from slowapi import Limiter
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
-from fastapi.responses import JSONResponse
+app = FastAPI()
 
-app = FastAPI(
-    title="Football Data API",
-    version="2.0.0"
-)
-
-# =========================
 # 🔐 SECURITY
-# =========================
-
 security = HTTPBearer()
+
+# 🔐 PASSWORD CONTEXT
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-SECRET_KEY = os.getenv("SECRET_KEY")
+# ENV
 ADMIN_USER = os.getenv("ADMIN_USER")
 ADMIN_PASS_HASH = os.getenv("ADMIN_PASS_HASH")
-DATABASE_URL = os.getenv("DATABASE_URL")
+SECRET_KEY = os.getenv("SECRET_KEY")
+
+
+# =========================
+# 🚨 ENV CHECK (ÇOK ÖNEMLİ)
+# =========================
+if not ADMIN_USER:
+    raise Exception("ADMIN_USER missing")
+
+if not ADMIN_PASS_HASH:
+    raise Exception("ADMIN_PASS_HASH missing")
 
 if not SECRET_KEY:
-    raise ValueError("SECRET_KEY missing")
+    raise Exception("SECRET_KEY missing")
 
-if not DATABASE_URL:
-    raise ValueError("DATABASE_URL missing")
-
-pool = None
 
 # =========================
-# 🚫 RATE LIMIT
+# 🔍 DEBUG PRINT (STARTUP)
 # =========================
+print("=== STARTUP DEBUG ===")
+print("ADMIN_USER:", ADMIN_USER)
+print("HASH:", ADMIN_PASS_HASH)
+print("HASH LENGTH:", len(ADMIN_PASS_HASH))
 
-limiter = Limiter(key_func=get_remote_address)
-
-@app.exception_handler(RateLimitExceeded)
-def rate_limit_handler(request: Request, exc: RateLimitExceeded):
-    return JSONResponse(
-        status_code=429,
-        content={"detail": "Too many requests"}
-    )
 
 # =========================
-# 🚀 DB STARTUP
+# 🔑 VERIFY FUNCTION
 # =========================
-
-@app.on_event("startup")
-async def startup():
-    global pool
-    pool = await asyncpg.create_pool(
-        DATABASE_URL,
-        min_size=1,
-        max_size=5
-    )
-
-@app.on_event("shutdown")
-async def shutdown():
-    await pool.close()
-
-# =========================
-# 🔐 AUTH LOGIC
-# =========================
-
 def verify_password(plain, hashed):
-    return pwd_context.verify(plain, hashed)
+    try:
+        print("---- VERIFY DEBUG ----")
+        print("INPUT:", plain)
+        print("INPUT LEN:", len(plain))
+        print("HASH:", hashed)
+        print("HASH LEN:", len(hashed))
+
+        result = pwd_context.verify(plain, hashed)
+
+        print("VERIFY RESULT:", result)
+        return result
+
+    except Exception as e:
+        print("VERIFY ERROR:", str(e))
+        raise HTTPException(status_code=500, detail=f"Verify error: {str(e)}")
 
 
-def create_token(username: str, role: str):
-    return jwt.encode(
+# =========================
+# 🔑 LOGIN MODEL
+# =========================
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+# =========================
+# 🔑 LOGIN ENDPOINT
+# =========================
+@app.post("/login")
+def login(data: LoginRequest):
+
+    print("=== LOGIN REQUEST ===")
+    print("USERNAME:", data.username)
+    print("PASSWORD:", data.password)
+
+    if data.username != ADMIN_USER:
+        raise HTTPException(status_code=401, detail="Wrong username")
+
+    if not verify_password(data.password, ADMIN_PASS_HASH):
+        raise HTTPException(status_code=401, detail="Wrong password")
+
+    token = jwt.encode(
         {
-            "sub": username,
-            "role": role,
-            "iat": datetime.utcnow(),
+            "user": data.username,
             "exp": datetime.utcnow() + timedelta(hours=12)
         },
         SECRET_KEY,
         algorithm="HS256"
     )
 
-
-def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security)
-):
-    try:
-        token = credentials.credentials
-
-        payload = jwt.decode(
-            token,
-            SECRET_KEY,
-            algorithms=["HS256"]
-        )
-
-        if payload.get("sub") != ADMIN_USER:
-            raise HTTPException(403, "Unauthorized user")
-
-        return payload
-
-    except:
-        raise HTTPException(401, "Invalid token")
-
-
-def require_admin(user=Depends(get_current_user)):
-    if user["role"] != "admin":
-        raise HTTPException(403, "Admin only")
-    return user
-
-
-# =========================
-# 🔑 LOGIN
-# =========================
-
-class LoginRequest(BaseModel):
-    username: str
-    password: str
-
-
-@app.post("/login", tags=["Auth"])
-@limiter.limit("5/minute")
-def login(request: Request, data: LoginRequest):
-
-    if data.username != ADMIN_USER:
-        raise HTTPException(401, "Wrong credentials")
-
-    if not verify_password(data.password, ADMIN_PASS_HASH):
-        raise HTTPException(401, "Wrong credentials")
-
-    token = create_token(data.username, "admin")
-
     return {"access_token": token}
-
-
-# =========================
-# 🧪 HEALTH
-# =========================
-
-@app.get("/", tags=["System"])
-async def health():
-    try:
-        async with pool.acquire() as conn:
-            await conn.fetch("SELECT 1")
-        return {"status": "ok"}
-    except Exception as e:
-        return {"status": "error", "detail": str(e)}
-
-
-# =========================
-# 🛠 ADMIN ENDPOINTS
-# =========================
-
-@app.get("/admin/tables", tags=["Admin"])
-async def get_tables(user=Depends(require_admin)):
-
-    async with pool.acquire() as conn:
-        rows = await conn.fetch("""
-            SELECT table_name
-            FROM information_schema.tables
-            WHERE table_schema = 'public'
-        """)
-
-    return {"tables": [r["table_name"] for r in rows]}
-
-
-@app.get("/admin/indexes", tags=["Admin"])
-async def get_indexes(user=Depends(require_admin)):
-
-    async with pool.acquire() as conn:
-        rows = await conn.fetch("""
-            SELECT indexname, indexdef
-            FROM pg_indexes
-            WHERE schemaname = 'public'
-        """)
-
-    return [
-        {
-            "name": r["indexname"],
-            "definition": r["indexdef"]
-        }
-        for r in rows
-    ]
-
-
-@app.get("/admin/columns", tags=["Admin"])
-async def get_columns(table: str, user=Depends(require_admin)):
-
-    async with pool.acquire() as conn:
-        rows = await conn.fetch("""
-            SELECT column_name, data_type
-            FROM information_schema.columns
-            WHERE table_name = $1
-        """, table)
-
-    return [
-        {
-            "column": r["column_name"],
-            "type": r["data_type"]
-        }
-        for r in rows
-    ]
