@@ -112,13 +112,10 @@ async def require_admin(
 
     async with pool.acquire() as conn:
 
-        # yeni IP mi?
         new_ip = await is_new_ip(conn, info["ip"], user["user"])
 
-        # logla
         await log_event(conn, "admin_access", info, user["user"])
 
-        # yeni IP ise mail
         if new_ip:
             send_admin_alert(
                 user["user"],
