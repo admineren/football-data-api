@@ -69,18 +69,6 @@ async def startup():
 async def shutdown():
     await pool.close()
 
-# =========================
-# 🧠 AUDIT LOG
-# =========================
-audit_logs = []
-
-def log_event(event, user=None, ip=None):
-    audit_logs.append({
-        "event": event,
-        "user": user,
-        "ip": ip,
-        "time": datetime.utcnow().isoformat()
-    })
 
 # =========================
 # 🔑 AUTH
@@ -309,12 +297,9 @@ def format_percent(value):
 # =========================
 @app.get("/")
 async def health():
+    async with pool.acquire() as conn:
+        await conn.fetch("SELECT 1")
     return {"status": "ok"}
-
-@app.get("/test-email")
-def test_email():
-    status, text = send_email("TEST", "Mail sistemi çalışıyor 🚀")
-    return {"status": status, "response": text}
 
 # =============================
 # 📊 STATS
