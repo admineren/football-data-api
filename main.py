@@ -142,7 +142,8 @@ def get_request_info(request: Request):
     return {
         "ip": ip,
         "user_agent": user_agent,
-        "device": detect_device(user_agent)
+        "device": detect_device(user_agent),
+        "endpoint": str(request.url.path)
     }
 
 
@@ -157,16 +158,31 @@ def detect_device(user_agent: str):
         return "bot"
     else:
         return "unknown"
+
 async def log_event(conn, event_type, info, user=None, detail=None):
+    country = get_country(info["ip"])
+
     await conn.execute("""
-        INSERT INTO logs (event_type, ip, user_agent, device, user_name, detail, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, NOW())
+        INSERT INTO logs (
+            event_type,
+            ip,
+            user_agent,
+            device,
+            user_name,
+            endpoint,
+            country,
+            detail,
+            created_at
+        )
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW())
     """,
         event_type,
         info["ip"],
         info["user_agent"],
         info["device"],
         user,
+        info["endpoint"],
+        country,
         detail
                       )
 
@@ -227,7 +243,15 @@ async def is_new_ip(conn, ip, user):
     """, user, ip)
 
     return row is None
-    
+
+def get_country(ip: str):
+    try:
+        res = requests.get(f"http://ip-api.com/json/{ip}?fields=countryCode", timeout=2)
+        data = res.json()
+        return data.get("countryCode", "UNK")
+    except:
+        return "UNK"
+
 # =========================
 # 🔑 LOGIN
 # =========================
@@ -408,7 +432,7 @@ async def get_logs(user=Depends(require_admin)):
 
     async with pool.acquire() as conn:
         rows = await conn.fetch("""
-            SELECT event_type, ip, user_agent, device, user_name, detail, created_at
+            SELECT event_type, ip, country, user_agent, device, user_name, endpoint, detail, created_at
             FROM logs
             ORDER BY created_at DESC
             LIMIT 100
